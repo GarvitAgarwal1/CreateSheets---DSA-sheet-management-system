@@ -1,0 +1,46 @@
+/* 15. App shell layout */
+.app-shell {
+  min-height: 100vh;
+  background: var(--background);
+}
+
+.app-shell-grid {
+  display: grid;
+  grid-template-columns: var(--sidebar-width, 64px) 1fr;
+  min-height: 100vh;
+  transition: grid-template-columns var(--transition-slow);
+}
+
+.app-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px 24px;
+  max-width: 100%;
+}
+
+@media (min-width: 768px) {
+  .app-content {
+    padding: 0 20px 32px;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-shell-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.app-footer {
+  margin-top: 48px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.app-footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}

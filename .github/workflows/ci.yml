@@ -1,0 +1,172 @@
+name: CI / CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Run frontend tests
+        run: npm run test
+
+  backend:
+    name: Backend checks
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Run backend tests
+        run: mvn test
+
+      - name: Build production JAR
+        run: mvn clean package -DskipTests
+
+  production-config:
+    name: Production config checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate workflow YAML
+        run: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml"); puts "yaml ok"'
+
+      - name: Validate production Compose
+        run: docker compose -f docker-compose.prod.yml config
+        env:
+          MONGODB_URI: mongodb://example.invalid:27017/createsheets
+          APP_AUTH_SECRET: ci-placeholder-secret
+
+  deploy-production:
+    name: Deploy Production Docker Stack
+    runs-on: ubuntu-latest
+    needs: [frontend, backend, production-config]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    concurrency:
+      group: production-docker
+      cancel-in-progress: false
+
+    env:
+      EC2_APP_DIR: /opt/createsheets/app
+      COMPOSE_FILE: docker-compose.prod.yml
+      HAS_DEPLOY_SECRETS: ${{ secrets.SSH_DEPLOY_KEY != '' && secrets.DEPLOY_HOST != '' && secrets.DEPLOY_USER != '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skip deploy when SSH secrets are missing
+        if: env.HAS_DEPLOY_SECRETS != 'true'
+        run: |
+          echo "Production deployment skipped because SSH_DEPLOY_KEY, DEPLOY_HOST, or DEPLOY_USER is not configured."
+          echo "CI checks still ran successfully. Add the deployment secrets to enable EC2 deployment on main pushes."
+
+      - name: Setup SSH agent
+        if: env.HAS_DEPLOY_SECRETS == 'true'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_DEPLOY_KEY }}
+
+      - name: Add server to known_hosts
+        if: env.HAS_DEPLOY_SECRETS == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Ensure remote app directory exists
+        if: env.HAS_DEPLOY_SECRETS == 'true'
+        run: |
+          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "sudo mkdir -p '${EC2_APP_DIR}' && sudo chown -R '${{ secrets.DEPLOY_USER }}':'${{ secrets.DEPLOY_USER }}' /opt/createsheets"
+
+      - name: Sync repository to EC2
+        if: env.HAS_DEPLOY_SECRETS == 'true'
+        run: |
+          rsync \
+            --archive \
+            --delete \
+            --checksum \
+            --compress \
+            --verbose \
+            --exclude '.git/' \
+            --exclude '.github/workflows/*.local.yml' \
+            --exclude '.env' \
+            --exclude 'backend/.env' \
+            --exclude 'node_modules/' \
+            --exclude 'dist/' \
+            --exclude 'backend/target/' \
+            --exclude 'docs/*.m4a' \
+            --exclude 'record.md' \
+            --exclude '*.pem' \
+            --exclude '.DS_Store' \
+            ./ \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${EC2_APP_DIR}/"
+
+      - name: Build and restart Docker stack
+        if: env.HAS_DEPLOY_SECRETS == 'true'
+        run: |
+          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "set -euo pipefail
+             cd '${EC2_APP_DIR}'
+             test -f .env || { echo 'Missing ${EC2_APP_DIR}/.env on EC2.'; exit 1; }
+             docker compose --env-file .env -f '${COMPOSE_FILE}' config >/tmp/createsheets-compose-rendered.yml
+             docker compose --env-file .env -f '${COMPOSE_FILE}' up -d --build --remove-orphans
+             docker compose --env-file .env -f '${COMPOSE_FILE}' ps"
+
+      - name: Validate local container health
+        if: env.HAS_DEPLOY_SECRETS == 'true'
+        run: |
+          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "set -euo pipefail
+             docker exec createsheets-redis redis-cli ping
+             curl -fsS http://127.0.0.1:18080/api/health
+             curl -fsS http://127.0.0.1:3000/healthz
+             sudo cp '${EC2_APP_DIR}/deploy/nginx-createsheets-docker.conf' /etc/nginx/conf.d/createsheets.conf
+             sudo nginx -t
+             sudo systemctl reload nginx"
+
+      - name: Validate public URLs
+        if: env.HAS_DEPLOY_SECRETS == 'true'
+        run: |
+          curl --retry 8 --retry-delay 5 --retry-all-errors -fsSI https://www.createsheets.com >/dev/null
+          curl --retry 8 --retry-delay 5 --retry-all-errors -fsS https://www.createsheets.com/api/health >/dev/null
+          curl --retry 8 --retry-delay 5 --retry-all-errors -fsS https://api.createsheets.com/api/health >/dev/null

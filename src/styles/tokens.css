@@ -1,0 +1,248 @@
+/* 3. Design tokens — light theme */
+:root, :root[data-theme="superman-light"] {
+  /* Backgrounds */
+  --background: #f4f6fb;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-subtle: #f0f3f9;
+  --surface-muted: #e8edf6;
+
+  /* Text */
+  --text-primary: #0f1923;
+  --text-secondary: #3d5068;
+  --text-tertiary: #6b7fa3;
+  --text-placeholder: #9dafc8;
+
+  /* Brand accent — deeper blue */
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-primary-subtle: #eff6ff;
+  --accent-primary-muted: #dbeafe;
+
+  /* Status colors — LeetCode-inspired */
+  --color-solved: #16a34a;
+  --color-solved-bg: #f0fdf4;
+  --color-solved-border: #bbf7d0;
+  --color-attempted: #d97706;
+  --color-attempted-bg: #fffbeb;
+  --color-attempted-border: #fde68a;
+  --color-failed: #dc2626;
+  --color-failed-bg: #fef2f2;
+  --color-failed-border: #fecaca;
+  --color-unsolved: #94a3b8;
+
+  /* Difficulty colors — LeetCode standard */
+  --difficulty-easy: #00b8a3;
+  --difficulty-easy-bg: #e6f7f5;
+  --difficulty-medium: #ffa116;
+  --difficulty-medium-bg: #fff7ed;
+  --difficulty-hard: #ef4743;
+  --difficulty-hard-bg: #fff1f1;
+
+  /* Borders */
+  --border-subtle: #e2e8f3;
+  --border-base: #c8d3e8;
+  --border-strong: #8fa5c8;
+
+  /* Sidebar specific */
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #e2e8f0;
+  --sidebar-text: #334155;
+  --sidebar-muted: #64748b;
+  --sidebar-section: #64748b;
+  --sidebar-icon: #64748b;
+  --sidebar-hover-bg: #f8fafc;
+  --sidebar-hover-text: #1e293b;
+  --sidebar-hover-icon: #2563eb;
+  --sidebar-active-bg: #eff6ff;
+  --sidebar-active-text: #2563eb;
+  --sidebar-active-icon: #2563eb;
+  --sidebar-active-border: #2563eb;
+  --sidebar-logo-bg: #2563eb;
+  --sidebar-logo-text: #ffffff;
+  --sidebar-user-bg: #2563eb;
+  --sidebar-shadow: 0 18px 50px rgba(15, 23, 42, 0.10);
+  --sidebar-text-active: var(--sidebar-active-text);
+  --sidebar-item-active-bg: var(--sidebar-active-bg);
+  --sidebar-item-hover-bg: var(--sidebar-hover-bg);
+  --sidebar-section-label: var(--sidebar-section);
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(15,25,42,0.06);
+  --shadow-sm: 0 2px 8px rgba(15,25,42,0.08), 0 1px 2px rgba(15,25,42,0.04);
+  --shadow-md: 0 4px 16px rgba(15,25,42,0.10), 0 2px 4px rgba(15,25,42,0.06);
+  --shadow-lg: 0 12px 40px rgba(15,25,42,0.14), 0 4px 8px rgba(15,25,42,0.06);
+  --shadow-xl: 0 24px 64px rgba(15,25,42,0.18);
+
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Typography scale */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 38px;
+
+  /* Font weights */
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-extrabold: 800;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Border radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+  --radius-full: 9999px;
+
+  /* Transition presets */
+  --transition-fast: 120ms ease;
+  --transition-base: 200ms ease;
+  --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Z-index scale */
+  --z-sidebar: 50;
+  --z-topbar: 60;
+  --z-drawer: 80;
+  --z-modal: 100;
+  --z-tooltip: 120;
+  --z-notification: 130;
+
+  --overlay-backdrop: rgba(15, 25, 42, 0.6);
+}
+
+/* 4. Dark theme */
+:root[data-theme="batman-dark"] {
+  color-scheme: dark;
+  --background: #0d1117;
+  --surface: #161b22;
+  --surface-elevated: #1c2230;
+  --surface-subtle: #111827;
+  --surface-muted: #0d1117;
+
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-tertiary: #6e7681;
+  --text-placeholder: #484f58;
+
+  --accent-primary: #58a6ff;
+  --accent-primary-hover: #79b8ff;
+  --accent-primary-subtle: rgba(88,166,255,0.10);
+  --accent-primary-muted: rgba(88,166,255,0.18);
+
+  --color-solved: #3fb950;
+  --color-solved-bg: rgba(63,185,80,0.10);
+  --color-solved-border: rgba(63,185,80,0.25);
+  --color-attempted: #d29922;
+  --color-attempted-bg: rgba(210,153,34,0.10);
+  --color-attempted-border: rgba(210,153,34,0.25);
+  --color-failed: #f85149;
+  --color-failed-bg: rgba(248,81,73,0.10);
+  --color-failed-border: rgba(248,81,73,0.25);
+  --color-unsolved: #484f58;
+
+  --difficulty-easy: #00b8a3;
+  --difficulty-easy-bg: rgba(0,184,163,0.12);
+  --difficulty-medium: #ffa116;
+  --difficulty-medium-bg: rgba(255,161,22,0.12);
+  --difficulty-hard: #ef4743;
+  --difficulty-hard-bg: rgba(239,71,67,0.12);
+
+  --border-subtle: rgba(48,54,69,0.8);
+  --border-base: #30363d;
+  --border-strong: #6e7681;
+
+  --sidebar-bg: #020617;
+  --sidebar-border: #1e293b;
+  --sidebar-text: #cbd5e1;
+  --sidebar-muted: #94a3b8;
+  --sidebar-section: #64748b;
+  --sidebar-icon: #94a3b8;
+  --sidebar-hover-bg: #0f172a;
+  --sidebar-hover-text: #e2e8f0;
+  --sidebar-hover-icon: #60a5fa;
+  --sidebar-active-bg: #0f172a;
+  --sidebar-active-text: #f8fafc;
+  --sidebar-active-icon: #60a5fa;
+  --sidebar-active-border: #60a5fa;
+  --sidebar-logo-bg: #3b82f6;
+  --sidebar-logo-text: #ffffff;
+  --sidebar-user-bg: #3b82f6;
+  --sidebar-shadow: 0 24px 64px rgba(0, 0, 0, 0.48);
+  --sidebar-text-active: var(--sidebar-active-text);
+  --sidebar-item-active-bg: var(--sidebar-active-bg);
+  --sidebar-item-hover-bg: var(--sidebar-hover-bg);
+  --sidebar-section-label: var(--sidebar-section);
+
+  --shadow-xs: 0 1px 2px rgba(1,4,9,0.3);
+  --shadow-sm: 0 2px 8px rgba(1,4,9,0.4);
+  --shadow-md: 0 4px 16px rgba(1,4,9,0.5);
+  --shadow-lg: 0 12px 40px rgba(1,4,9,0.6);
+  --shadow-xl: 0 24px 64px rgba(1,4,9,0.7);
+
+  --overlay-backdrop: rgba(1,4,9,0.74);
+}
+
+/* 5. Blue theme */
+:root[data-theme="joker-blue"] {
+  color-scheme: dark;
+  --background: #071326; --surface: #122341; --surface-elevated: #193055;
+  --surface-subtle: #0f2140; --surface-muted: #0d1b35;
+  --text-primary: #eaf6ff; --text-secondary: #bfdaf5;
+  --text-tertiary: #8fb3dd; --text-placeholder: #4a7aad;
+  --accent-primary: #50b6ff; --accent-primary-hover: #6dc2ff;
+  --accent-primary-subtle: rgba(80,182,255,0.10); --accent-primary-muted: rgba(80,182,255,0.18);
+  --color-solved: #3ac3a6; --color-solved-bg: rgba(58,195,166,0.12); --color-solved-border: rgba(58,195,166,0.3);
+  --color-attempted: #ffc145; --color-attempted-bg: rgba(255,193,69,0.12); --color-attempted-border: rgba(255,193,69,0.3);
+  --color-failed: #ff6f91; --color-failed-bg: rgba(255,111,145,0.12); --color-failed-border: rgba(255,111,145,0.3);
+  --color-unsolved: #4a7aad;
+  --difficulty-easy: #00b8a3; --difficulty-easy-bg: rgba(0,184,163,0.14);
+  --difficulty-medium: #ffa116; --difficulty-medium-bg: rgba(255,161,22,0.14);
+  --difficulty-hard: #ef4743; --difficulty-hard-bg: rgba(239,71,67,0.14);
+  --border-subtle: rgba(121,188,255,0.18); --border-base: rgba(121,188,255,0.25); --border-strong: rgba(121,188,255,0.4);
+  --sidebar-bg: #081225;
+  --sidebar-border: #1e3a5f;
+  --sidebar-text: #bfdbfe;
+  --sidebar-muted: #93c5fd;
+  --sidebar-section: #647fa3;
+  --sidebar-icon: #93c5fd;
+  --sidebar-hover-bg: #10213a;
+  --sidebar-hover-text: #dbeafe;
+  --sidebar-hover-icon: #38bdf8;
+  --sidebar-active-bg: #132d4a;
+  --sidebar-active-text: #e0f2fe;
+  --sidebar-active-icon: #38bdf8;
+  --sidebar-active-border: #38bdf8;
+  --sidebar-logo-bg: #38bdf8;
+  --sidebar-logo-text: #ffffff;
+  --sidebar-user-bg: #38bdf8;
+  --sidebar-shadow: 0 24px 64px rgba(1, 8, 24, 0.52);
+  --sidebar-text-active: var(--sidebar-active-text);
+  --sidebar-item-active-bg: var(--sidebar-active-bg);
+  --sidebar-item-hover-bg: var(--sidebar-hover-bg);
+  --sidebar-section-label: var(--sidebar-section);
+  --shadow-xs: 0 1px 2px rgba(2,10,24,0.4); --shadow-sm: 0 2px 8px rgba(2,10,24,0.5);
+  --shadow-md: 0 4px 16px rgba(2,10,24,0.6); --shadow-lg: 0 12px 40px rgba(2,10,24,0.7);
+  --shadow-xl: 0 24px 64px rgba(2,10,24,0.8);
+  --overlay-backdrop: rgba(2,10,24,0.72);
+}

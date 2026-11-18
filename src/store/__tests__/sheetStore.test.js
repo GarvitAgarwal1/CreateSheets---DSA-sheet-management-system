@@ -1,0 +1,465 @@
+import { useSheetStore } from "../sheetStore";
+import { useAuthStore } from "../authStore";
+import { createTopic } from "../../api/questionSheet";
+import { createSheet, getSheet, listSheets, saveSheet } from "../../api/sheetApi";
+
+vi.mock("../../api/questionSheet", () => ({
+  createTopic: vi.fn(),
+  createSubTopic: vi.fn(),
+  createQuestion: vi.fn(),
+  updateTopic: vi.fn(),
+  deleteTopic: vi.fn(),
+  updateSubTopic: vi.fn(),
+  deleteSubTopic: vi.fn(),
+  updateQuestion: vi.fn(),
+  deleteQuestion: vi.fn(),
+}));
+
+vi.mock("../../api/sheetApi", () => ({
+  createSheet: vi.fn(),
+  getSheet: vi.fn(),
+  listSheets: vi.fn(),
+  removeSheet: vi.fn(),
+  saveSheet: vi.fn(),
+}));
+
+const baseTopics = [
+  {
+    id: "t1",
+    title: "Topic",
+    subTopics: [
+      {
+        id: "s1",
+        title: "Sub",
+        questions: [{ id: "q1", text: "Q1", done: false }],
+      },
+    ],
+  },
+];
+
+const makeTopic = (index) => ({
+  id: `topic-${index}`,
+  title: `Topic ${index}`,
+  subTopics: [],
+});
+
+const resetStore = () => {
+  useSheetStore.setState({
+    sheets: [],
+    activeSheetId: "sheet-1",
+    topics: JSON.parse(JSON.stringify(baseTopics)),
+    sheetTitle: "Sheet A",
+    logoUrl: "",
+    sheetUrl: "",
+    isLoading: false,
+    loadError: null,
+    loadSource: "idle",
+    past: [],
+    future: [],
+    limitWarning: null,
+    hasPendingChanges: false,
+    isSaving: false,
+    saveError: null,
+    lastSavedAt: null,
+  });
+};
+
+describe("sheetStore core flows", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetStore();
+    useAuthStore.setState({ currentUser: { id: "user-1", token: "token", premiumActive: false } });
+  });
+
+  it("supports CRUD updates with undo/redo history", async () => {
+    createTopic.mockResolvedValue({
+      topics: [
+        ...baseTopics,
+        {
+          id: "t2",
+          title: "New Topic",
+          subTopics: [],
+        },
+      ],
+    });
+
+    await useSheetStore.getState().addTopic("New Topic");
+    expect(useSheetStore.getState().topics).toHaveLength(2);
+
+    useSheetStore.getState().undo();
+    expect(useSheetStore.getState().topics).toHaveLength(1);
+
+    useSheetStore.getState().redo();
+    expect(useSheetStore.getState().topics).toHaveLength(2);
+    expect(useSheetStore.getState().hasPendingChanges).toBe(true);
+  });
+
+  it("stores multiple attempts and keeps solved questions completed after later attempts", () => {
+    useSheetStore.getState().updateQuestionAttempt("t1", "s1", "q1", {
+      result: "failed",
+      loggedAt: "2026-05-01T00:00:00Z",
+    });
+    expect(useSheetStore.getState().topics[0].subTopics[0].questions[0].done).toBe(false);
+
+    useSheetStore.getState().updateQuestionAttempt("t1", "s1", "q1", {
+      result: "partially_solved",
+      loggedAt: "2026-05-02T00:00:00Z",
+    });
+    expect(useSheetStore.getState().topics[0].subTopics[0].questions[0].done).toBe(false);
+
+    useSheetStore.getState().updateQuestionAttempt("t1", "s1", "q1", {
+      result: "solved",
+      loggedAt: "2026-05-03T00:00:00Z",
+    });
+    expect(useSheetStore.getState().topics[0].subTopics[0].questions[0].done).toBe(true);
+
+    useSheetStore.getState().updateQuestionAttempt("t1", "s1", "q1", {
+      result: "failed",
+      loggedAt: "2026-05-04T00:00:00Z",
+    });
+
+    const question = useSheetStore.getState().topics[0].subTopics[0].questions[0];
+    expect(question.done).toBe(true);
+    expect(question.attemptLogs.map((attempt) => attempt.result)).toEqual([
+      "failed",
+      "partially_solved",
+      "solved",
+      "failed",
+    ]);
+    expect(question.attemptLog).toMatchObject({
+      result: "failed",
+      loggedAt: "2026-05-04T00:00:00Z",
+    });
+  });
+
+  it("reorders questions while preserving string ids", () => {
+    useSheetStore.setState({
+      topics: [
+        {
+          id: "topic-alpha-1",
+          title: "Topic",
+          subTopics: [
+            {
+              id: "sub-beta-2",
+              title: "Sub",
+              questions: [
+                { id: "q-1", text: "First" },
+                { id: "q-2", text: "Second" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    useSheetStore.getState().moveQuestion("topic-alpha-1", "sub-beta-2", "topic-alpha-1", "sub-beta-2", 0, 1);
+
+    expect(useSheetStore.getState().topics[0].subTopics[0].questions.map((question) => question.id)).toEqual([
+      "q-2",
+      "q-1",
+    ]);
+  });
+
+  it("persists attempt logs in the sheet save payload", async () => {
+    saveSheet.mockResolvedValue({ id: "sheet-1" });
+
+    useSheetStore.getState().updateQuestionAttempt("t1", "s1", "q1", {
+      result: "solved",
+      loggedAt: "2026-05-05T00:00:00Z",
+    });
+
+    const saved = await useSheetStore.getState().saveCurrentSheetDraft("token");
+    const payload = saveSheet.mock.calls.at(-1)[2];
+    const savedQuestion = payload.topics[0].subTopics[0].questions[0];
+
+    expect(saved).toBe(true);
+    expect(savedQuestion.done).toBe(true);
+    expect(savedQuestion.attemptLog).toMatchObject({ result: "solved" });
+    expect(savedQuestion.attemptLogs).toEqual([
+      expect.objectContaining({ result: "solved", loggedAt: "2026-05-05T00:00:00Z" }),
+    ]);
+    expect(useSheetStore.getState().hasPendingChanges).toBe(false);
+  });
+
+  it("saves draft and can discard pending changes", async () => {
+    getSheet.mockResolvedValue({
+      id: "sheet-1",
+      title: "Sheet A",
+      logoUrl: "https://example.com/logo.png",
+      sheetUrl: "https://example.com/ref",
+      topics: baseTopics,
+      updatedAt: "2026-04-08T00:00:00Z",
+    });
+    saveSheet.mockResolvedValue({ id: "sheet-1" });
+
+    await useSheetStore.getState().loadSheetById("token", "sheet-1");
+    expect(useSheetStore.getState().logoUrl).toBe("https://example.com/logo.png");
+    expect(useSheetStore.getState().sheetUrl).toBe("https://example.com/ref");
+    useSheetStore.getState().setSheetTitle("Sheet A updated");
+
+    expect(useSheetStore.getState().hasPendingChanges).toBe(true);
+
+    const saved = await useSheetStore.getState().saveCurrentSheetDraft("token");
+    expect(saved).toBe(true);
+    expect(useSheetStore.getState().hasPendingChanges).toBe(false);
+
+    useSheetStore.getState().setSheetTitle("Unsaved change");
+    expect(useSheetStore.getState().sheetTitle).toBe("Unsaved change");
+
+    useSheetStore.getState().discardUnsavedChanges();
+    expect(useSheetStore.getState().sheetTitle).toBe("Sheet A updated");
+    expect(useSheetStore.getState().logoUrl).toBe("https://example.com/logo.png");
+    expect(useSheetStore.getState().sheetUrl).toBe("https://example.com/ref");
+    expect(useSheetStore.getState().hasPendingChanges).toBe(false);
+  });
+
+  it("updates sheet logo and reference metadata without resending content", async () => {
+    useSheetStore.setState({
+      sheets: [{ id: "sheet-1", title: "Sheet A", topics: baseTopics }],
+      activeSheetId: "sheet-1",
+      sheetTitle: "Sheet A",
+      topics: baseTopics,
+      topicTags: [],
+      userCustomTopics: [],
+      logoUrl: "",
+      sheetUrl: "",
+    });
+    saveSheet.mockResolvedValue({
+      id: "sheet-1",
+      title: "Sheet A",
+      logoUrl: "https://example.com/logo.png",
+      sheetUrl: "https://example.com/ref",
+    });
+
+    await useSheetStore.getState().updateSheetMetadata("token", "sheet-1", {
+      logoUrl: "https://example.com/logo.png",
+      sheetUrl: "https://example.com/ref",
+    });
+
+    expect(saveSheet).toHaveBeenCalledWith("token", "sheet-1", {
+      logoUrl: "https://example.com/logo.png",
+      sheetUrl: "https://example.com/ref",
+    });
+    expect(useSheetStore.getState().logoUrl).toBe("https://example.com/logo.png");
+    expect(useSheetStore.getState().sheetUrl).toBe("https://example.com/ref");
+  });
+
+  it("surfaces save failures and keeps pending changes", async () => {
+    getSheet.mockResolvedValue({
+      id: "sheet-1",
+      title: "Sheet A",
+      topics: baseTopics,
+      updatedAt: "2026-04-08T00:00:00Z",
+    });
+    saveSheet.mockRejectedValue(new Error("disk full"));
+
+    await useSheetStore.getState().loadSheetById("token", "sheet-1");
+    useSheetStore.getState().setSheetTitle("Need save");
+
+    const saved = await useSheetStore.getState().saveCurrentSheetDraft("token");
+
+    expect(saved).toBe(false);
+    expect(useSheetStore.getState().saveError).toBe("disk full");
+    expect(useSheetStore.getState().hasPendingChanges).toBe(true);
+  });
+
+
+  it("normalizes legacy visibility keys when loading sheets", async () => {
+    listSheets.mockResolvedValue([
+      {
+        id: "sheet-1",
+        title: "Sheet A",
+        public: true,
+        archived: false,
+        topics: baseTopics,
+      },
+    ]);
+
+    await useSheetStore.getState().loadSheets("token");
+
+    expect(useSheetStore.getState().sheets[0]).toMatchObject({
+      isPublic: true,
+      isArchived: false,
+    });
+  });
+
+
+  it("treats visibility public or unlisted as shareable when isPublic is missing", async () => {
+    listSheets.mockResolvedValue([
+      {
+        id: "sheet-public",
+        title: "Public via visibility",
+        visibility: "public",
+        topics: baseTopics,
+      },
+      {
+        id: "sheet-unlisted",
+        title: "Unlisted via visibility",
+        visibility: "unlisted",
+        topics: baseTopics,
+      },
+      {
+        id: "sheet-private",
+        title: "Private via visibility",
+        visibility: "private",
+        topics: baseTopics,
+      },
+    ]);
+
+    await useSheetStore.getState().loadSheets("token");
+
+    expect(useSheetStore.getState().sheets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "sheet-public", isPublic: true }),
+        expect.objectContaining({ id: "sheet-unlisted", isPublic: true }),
+        expect.objectContaining({ id: "sheet-private", isPublic: false }),
+      ])
+    );
+  });
+
+  it("updates visibility without resending title/topics", async () => {
+    useSheetStore.setState({
+      sheets: [
+        {
+          id: "sheet-1",
+          title: "Sheet A",
+          topics: baseTopics,
+          isPublic: false,
+          isArchived: false,
+        },
+      ],
+      activeSheetId: null,
+    });
+    saveSheet.mockResolvedValue({ id: "sheet-1" });
+
+    await useSheetStore.getState().setSheetVisibility("token", "sheet-1", true);
+
+    expect(saveSheet).toHaveBeenCalledWith(
+      "token",
+      "sheet-1",
+      expect.objectContaining({
+        isPublic: true,
+      })
+    );
+    expect(saveSheet.mock.calls[0][2]).not.toHaveProperty("title");
+    expect(saveSheet.mock.calls[0][2]).not.toHaveProperty("topics");
+    expect(saveSheet.mock.calls[0][2]).not.toHaveProperty("isArchived");
+    expect(useSheetStore.getState().sheets[0].isPublic).toBe(true);
+  });
+
+
+  it("does not include visibility fields during content saves", async () => {
+    useSheetStore.setState({
+      sheets: [
+        {
+          id: "sheet-1",
+          title: "Sheet A",
+          topics: baseTopics,
+          isPublic: false,
+          isArchived: true,
+        },
+      ],
+      activeSheetId: "sheet-1",
+    });
+
+    saveSheet.mockResolvedValue({ id: "sheet-1" });
+
+    await useSheetStore.getState().saveCurrentSheetDraft("token");
+
+    expect(saveSheet.mock.calls[0][2]).toMatchObject({
+      title: "Sheet A",
+      topics: baseTopics,
+    });
+    expect(saveSheet.mock.calls[0][2]).not.toHaveProperty("isPublic");
+    expect(saveSheet.mock.calls[0][2]).not.toHaveProperty("isArchived");
+  });
+
+  it("syncs the fetched sheet metadata into the sheet list when opening a sheet", async () => {
+    useSheetStore.setState({
+      sheets: [
+        {
+          id: "sheet-1",
+          title: "Sheet A",
+          topics: baseTopics,
+          isPublic: true,
+          isArchived: false,
+        },
+      ],
+      activeSheetId: null,
+    });
+
+    getSheet.mockResolvedValue({
+      id: "sheet-1",
+      title: "Sheet A",
+      topics: baseTopics,
+      isPublic: false,
+      isArchived: false,
+      updatedAt: "2026-04-08T00:00:00Z",
+    });
+
+    await useSheetStore.getState().loadSheetById("token", "sheet-1");
+
+    expect(useSheetStore.getState().sheets[0].isPublic).toBe(false);
+  });
+
+  it("prevents creating beyond the generous workspace sheet limit", async () => {
+    useSheetStore.setState({
+      sheets: Array.from({ length: 10_000 }, (_, index) => ({ id: `sheet-${index + 1}`, title: `Sheet ${index + 1}` })),
+    });
+
+    const created = await useSheetStore.getState().createNewSheet("token", "Extra Sheet");
+
+    expect(created).toBeNull();
+    expect(createSheet).not.toHaveBeenCalled();
+    expect(useSheetStore.getState().limitWarning).toBe("Limit reached: sheet (10000)");
+  });
+
+  it("allows free users to create sheets under the generous limit", async () => {
+    useSheetStore.setState({
+      sheets: Array.from({ length: 5 }, (_, index) => ({ id: `sheet-${index + 1}`, title: `Sheet ${index + 1}` })),
+    });
+    createSheet.mockResolvedValue({ id: "sheet-6", title: "Extra Sheet" });
+
+    const created = await useSheetStore.getState().createNewSheet("token", "Extra Sheet");
+
+    expect(created).toMatchObject({ id: "sheet-6" });
+    expect(createSheet).toHaveBeenCalledWith("token", "Extra Sheet", {});
+    expect(useSheetStore.getState().limitWarning).toBeNull();
+  });
+
+  it("blocks copying only when a sheet exceeds the generous safety limit unless source id is exempt", async () => {
+    const oversizedTopics = Array.from({ length: 10_001 }, (_, index) => makeTopic(index + 1));
+    createSheet.mockResolvedValue({ id: "copied-1", title: "Copied" });
+
+    const blocked = await useSheetStore.getState().duplicateSheet("token", {
+      id: "random-source",
+      title: "Blind 75",
+      topics: oversizedTopics,
+    });
+
+    expect(blocked).toBeNull();
+    expect(createSheet).not.toHaveBeenCalled();
+    expect(useSheetStore.getState().limitWarning).toBe("Limit reached: copy (topics)");
+
+    const allowed = await useSheetStore.getState().duplicateSheet("token", {
+      id: "famous-blind-75",
+      title: "Anything",
+      topics: oversizedTopics,
+    });
+
+    expect(allowed).toMatchObject({ id: "copied-1" });
+    expect(createSheet).toHaveBeenCalledWith("token", "Anything", { logoUrl: "", sheetUrl: "" });
+  });
+
+  it("locks editing for free users when a sheet already exceeds free limits", async () => {
+    useSheetStore.setState({
+      topics: Array.from({ length: 10_001 }, (_, index) => makeTopic(index + 1)),
+    });
+
+    const created = await useSheetStore.getState().addTopic("One more");
+
+    expect(created).toBeNull();
+    expect(createTopic).not.toHaveBeenCalled();
+    expect(useSheetStore.getState().limitWarning).toBe("Limit reached: edit-lock (topics)");
+  });
+});

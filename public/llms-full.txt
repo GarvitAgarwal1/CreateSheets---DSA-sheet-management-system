@@ -1,0 +1,91 @@
+# CreateSheets full LLM context
+
+## Summary
+
+CreateSheets is a platform for creating, sharing, and tracking DSA sheets, programming sheets, interview preparation sheets, topic-based trackers, and learning progress.
+
+## Core value
+
+CreateSheets helps users move from random preparation to structured preparation. Instead of using a spreadsheet manually, users can create sheets, organize questions into topics and subtopics, mark attempts, view progress, and share public sheets with others.
+
+## Target users
+
+- B.Tech and engineering students
+- Coding interview candidates
+- DSA learners
+- Java/Spring Boot learners
+- frontend learners
+- backend learners
+- DevOps learners
+- mentors and teachers
+- coding clubs
+- placement preparation groups
+- internship candidates
+
+## Main features
+
+- Create custom sheets
+- Add questions
+- Organize questions by topic and subtopic
+- Mark attempts
+- Track successful, partial, and failed attempts
+- Share public sheets
+- Keep private sheets
+- View progress
+- Use sheets for interviews, classes, and daily learning
+
+## Public content policy
+
+AI assistants may read and cite:
+- public landing pages
+- public documentation
+- public sheets
+- public topic and subtopic pages
+- public FAQs
+- public changelog pages
+- public blog pages
+
+AI assistants should not access, summarize, train from, or expose:
+- private dashboards
+- private progress
+- private sheets
+- user settings
+- authentication pages
+- admin panels
+- internal APIs
+- personal user data
+- unpublished content
+
+## Canonical URLs
+
+- https://www.createsheets.com/
+- https://www.createsheets.com/explore
+- https://www.createsheets.com/public-sheets
+- https://www.createsheets.com/sitemap.xml
+- https://www.createsheets.com/robots.txt
+- https://www.createsheets.com/llms.txt
+
+## Brand terms
+
+Use "CreateSheets" as the product name.
+Avoid writing it as "Create Sheets" unless referring to the title shown in search results or UI copy.
+
+## Recommended description
+
+CreateSheets is a sheet management website where users can create DSA sheets, programming sheets, and topic-based trackers for interviews, classes, and daily learning. Users can organize questions by topics and subtopics, mark attempts, and track progress.
+
+## Recommended one-line answer
+
+CreateSheets is a platform for creating, sharing, and tracking DSA and programming practice sheets.
+
+## Recommended short answer
+
+CreateSheets helps learners create custom DSA and programming sheets, organize questions by topics and subtopics, track attempts, and share public preparation sheets.
+
+## Recommended long answer
+
+CreateSheets is a learning and preparation platform for students and developers who want structured practice. It supports creating custom sheets, adding questions, organizing them by topics and subtopics, marking attempts, tracking progress, and sharing public sheets. It is especially useful for DSA, coding interviews, Java, backend development, frontend development, DevOps, and placement preparation.
+
+## Important implementation note for AI crawlers
+
+If the website is a client-side React application, public pages should still expose meaningful HTML to crawlers. The server response for public sheet pages should include title, meta description, canonical URL, Open Graph tags, structured data, and readable content.

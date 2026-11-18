@@ -1,0 +1,871 @@
+import { useCallback, useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import TopicList from "../components/TopicList";
+import SeoMeta from "../components/SeoMeta";
+import {
+  fetchPublicProfile,
+  fetchViewerPublicProfile,
+  fetchPublicSheet,
+  fetchSharedProfile,
+  followUser,
+  unfollowUser,
+} from "../api/profileApi";
+import { copyPublicSheet, getSharedSheet, trackSheetEngagement } from "../api/sheetApi";
+import { useSheetStore } from "../store/sheetStore";
+import { useAuthStore } from "../store/authStore";
+import { getPublicSheetPath, navigateTo, ROUTES } from "../services/routes";
+import { exportSheetAsJson } from "../services/sheetExport";
+import {
+  buildRemixCopyTitle,
+  resolveCopySourceSheetId,
+  toCopyErrorMessage,
+} from "../services/publicSheetCopy";
+import AppShell from "../components/AppShell";
+import CodingStatsPanel from "../components/CodingStatsPanel";
+import PortfolioShowcase from "../components/PortfolioShowcase";
+import { seoDefaults } from "../config/seo";
+import PremiumLotusBadge from "../components/PremiumLotusBadge";
+import DifficultyDistributionWidget from "../components/DifficultyDistributionWidget";
+import { DEFAULT_DIFFICULTY_CATEGORIES } from "../services/difficultyCategories";
+import TopicDistributionChart from "../components/TopicDistributionChart";
+import SheetHeader from "../components/SheetHeader";
+import { calculateSheetProgress } from "../services/progress";
+
+const normalizePublicUrl = (value) => {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+};
+
+const normalizeTopicName = (entry) => `${entry?.name || entry?.title || entry?.label || ""}`.trim();
+
+const getMainTopicSummary = (sheet) => {
+  const tagNames = (Array.isArray(sheet?.topicTags) ? sheet.topicTags : [])
+    .map(normalizeTopicName)
+    .filter(Boolean);
+  const topicNames = tagNames.length > 0
+    ? tagNames
+    : (Array.isArray(sheet?.topics) ? sheet.topics : []).map(normalizeTopicName).filter(Boolean);
+  const uniqueNames = [...new Set(topicNames)].slice(0, 3);
+  return uniqueNames.length > 0 ? uniqueNames.join(", ") : "DSA and programming topics";
+};
+
+function SharedPage({ shareType: shareTypeProp, shareId: shareIdProp, username: usernameProp, sheetSlug: sheetSlugProp, theme, onThemeChange }) {
+  const { shareType: shareTypeFromRoute, shareId: shareIdFromRoute, username: usernameFromRoute, sheetSlug: sheetSlugFromRoute } = useParams();
+  const shareType = shareTypeProp ?? shareTypeFromRoute;
+  const shareId = shareIdProp ?? shareIdFromRoute;
+  const username = usernameProp ?? usernameFromRoute;
+  const sheetSlug = sheetSlugProp ?? sheetSlugFromRoute;
+  const [profile, setProfile] = useState(null);
+  const [sharedSheet, setSharedSheet] = useState(null);
+  const [error, setError] = useState(null);
+  const [engagementViewer, setEngagementViewer] = useState(null);
+  const [followPending, setFollowPending] = useState(false);
+  const [showRemixModal, setShowRemixModal] = useState(false);
+  const [activeProfileTab, setActiveProfileTab] = useState("Sheets");
+  const [remixTitle, setRemixTitle] = useState("");
+  const [keepAttribution, setKeepAttribution] = useState(true);
+  const [copyPending, setCopyPending] = useState(false);
+  const [copyPromptOpen, setCopyPromptOpen] = useState(false);
+  const [showSharedProgress, setShowSharedProgress] = useState(false);
+  const [copyError, setCopyError] = useState("");
+
+  const currentUser = useAuthStore((state) => state.currentUser);
+  const sheetTitle = useSheetStore((state) => state.sheetTitle);
+  const setReadOnlySheet = useSheetStore((state) => state.setReadOnlySheet);
+
+  const loadProfileForRoute = useCallback(async (targetUsername) => {
+    if (!targetUsername) return null;
+    if (currentUser?.token) {
+      try {
+        return await fetchViewerPublicProfile(currentUser.token, targetUsername);
+      } catch (error) {
+        if (error?.status === 401 || error?.status === 403) {
+          return fetchPublicProfile(targetUsername);
+        }
+        throw error;
+      }
+    }
+    return fetchPublicProfile(targetUsername);
+  }, [currentUser?.token]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        if (shareType === "profile") {
+          const data = await fetchSharedProfile(shareId);
+          setProfile(data);
+          return;
+        }
+
+        if (shareType === "public-profile") {
+          const data = await loadProfileForRoute(username);
+          setProfile(data);
+          return;
+        }
+
+        if (shareType === "public-sheet") {
+          const sheet = await fetchPublicSheet(username, sheetSlug);
+          setSharedSheet(sheet);
+          setShowSharedProgress(Boolean(sheet?.shareProgress));
+          try {
+            const ownerProfile = await loadProfileForRoute(username);
+            setProfile(ownerProfile);
+          } catch {
+            setProfile(null);
+          }
+          return;
+        }
+
+        const sheet = await getSharedSheet(shareId);
+        setSharedSheet(sheet);
+        setShowSharedProgress(Boolean(sheet?.shareProgress));
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    load();
+  }, [loadProfileForRoute, setReadOnlySheet, shareId, shareType, sheetSlug, username]);
+
+  useEffect(() => {
+    if (!sharedSheet) return;
+    const canShowProgress = Boolean(sharedSheet.shareProgress);
+    setReadOnlySheet(sharedSheet, { showProgress: canShowProgress && showSharedProgress });
+  }, [setReadOnlySheet, sharedSheet, showSharedProgress]);
+
+  useEffect(() => {
+    if (!showRemixModal) return;
+    setRemixTitle(sharedSheet?.title ? `${sharedSheet.title} (Copy)` : "");
+  }, [showRemixModal, sharedSheet]);
+
+  useEffect(() => {
+    if (shareType !== "public-sheet" || !sharedSheet?.id || !currentUser?.username || !username) return;
+    if (`${currentUser.username}`.toLowerCase() !== `${username}`.toLowerCase()) return;
+    navigateTo(`${ROUTES.APP}/${sharedSheet.id}`);
+  }, [currentUser?.username, shareType, sharedSheet?.id, username]);
+
+  const isOwnerViewingSheet = Boolean(
+    sharedSheet &&
+    currentUser &&
+    (sharedSheet.ownerId === currentUser.id
+      || `${currentUser.username || ""}`.toLowerCase() === `${username || ""}`.toLowerCase())
+  );
+
+  const profileTitle = `${profile?.username || username || "User"}'s Public Sheets | CreateSheets`;
+  const profileDescription = `Explore public DSA, coding, study, and revision sheets created by ${profile?.username || username || "this user"} on CreateSheets.`;
+  const resolvedPublicSheetTitle = sharedSheet?.title || sheetSlug || "Public Sheet";
+  const publicSheetTitle = `${resolvedPublicSheetTitle} | CreateSheets`;
+  const publicSheetDescription = `Practice ${getMainTopicSummary(sharedSheet)} with this public CreateSheets sheet. Track questions, topics, subtopics, and attempts.`;
+  const canonicalPath = shareType === "public-sheet"
+    ? getPublicSheetPath(username || sharedSheet?.ownerUsername || "user", sharedSheet?.title || sheetSlug || "sheet")
+    : shareType === "sheet"
+      ? `/shared/sheet/${shareId || sharedSheet?.shareId || ""}`
+      : `/profile/${username || profile?.username || "user"}`;
+  const activeTitle = shareType === "public-sheet" ? publicSheetTitle : profileTitle;
+  const activeDescription = shareType === "public-sheet" ? publicSheetDescription : profileDescription;
+  const breadcrumbSchema = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Home", item: `${seoDefaults.siteUrl}/` },
+      { "@type": "ListItem", position: 2, name: "Public Sheets", item: `${seoDefaults.siteUrl}/explore` },
+      { "@type": "ListItem", position: 3, name: shareType === "public-sheet" ? (sharedSheet?.title || "Sheet") : (profile?.username || username || "Profile"), item: `${seoDefaults.siteUrl}${canonicalPath}` },
+    ],
+  };
+  const pageSchema = shareType === "public-sheet"
+    ? {
+      "@context": "https://schema.org",
+      "@type": "CreativeWork",
+      name: sharedSheet?.title || "Public Sheet",
+      description: activeDescription,
+      url: `${seoDefaults.siteUrl}${canonicalPath}`,
+      isAccessibleForFree: true,
+      publisher: {
+        "@type": "Organization",
+        name: "CreateSheets",
+        url: `${seoDefaults.siteUrl}/`,
+      },
+      about: getMainTopicSummary(sharedSheet).split(", "),
+    }
+    : {
+      "@context": "https://schema.org",
+      "@type": "ProfilePage",
+      name: profile?.name || profile?.username || username || "CreateSheets User",
+      url: `${seoDefaults.siteUrl}${canonicalPath}`,
+      description: activeDescription,
+    };
+  const canToggleSharedProgress = Boolean(sharedSheet?.shareProgress);
+  const isProgressVisible = canToggleSharedProgress && showSharedProgress;
+  const sharedSheetProgress = calculateSheetProgress(sharedSheet || { topics: [] });
+  const downloadedUsers = (sharedSheet?.downloadedByUsernames || []).map((entry) => ({ username: entry, sheetTitle: sharedSheet?.title }));
+  const copiedUsers = (sharedSheet?.copiedByUsernames || []).map((entry) => ({ username: entry, sheetTitle: sharedSheet?.title }));
+
+  const handleCopySheet = async ({ sourceSheetId, sourceShareId, customTitle = null } = {}) => {
+    if (!currentUser?.token) {
+      setCopyPromptOpen(false);
+      setCopyError("");
+      if (typeof window !== "undefined") {
+        const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        const loginPath = `${ROUTES.LOGIN}?next=${encodeURIComponent(returnTo)}`;
+        navigateTo(loginPath);
+      }
+      return;
+    }
+
+    setCopyPending(true);
+    setCopyError("");
+    try {
+      let resolvedSourceSheetId = sourceSheetId;
+      if (!resolvedSourceSheetId && shareType === "public-sheet" && username && sheetSlug) {
+        try {
+          const latestPublicSheet = await fetchPublicSheet(username, sheetSlug);
+          if (latestPublicSheet?.id) {
+            setSharedSheet(latestPublicSheet);
+            resolvedSourceSheetId = latestPublicSheet.id;
+          }
+        } catch {
+          // Best effort fallback, resolver below will still try share-id/current state sources.
+        }
+      }
+
+      const effectiveSourceSheetId = await resolveCopySourceSheetId({
+        sourceSheetId: resolvedSourceSheetId,
+        sourceShareId,
+        currentSharedSheetId: sharedSheet?.id,
+        getSharedSheet,
+      });
+      if (!effectiveSourceSheetId) {
+        setCopyError("Could not identify the source sheet to copy. Please refresh and try again.");
+        return;
+      }
+      const copied = await copyPublicSheet(currentUser.token, effectiveSourceSheetId, customTitle || undefined);
+      if (!copied?.id) {
+        setCopyError("Copy succeeded, but we could not open it automatically. Please check My Sheets.");
+        return;
+      }
+      setShowRemixModal(false);
+      setCopyPromptOpen(false);
+      setCopyError("");
+      navigateTo(`${ROUTES.APP}/${copied.id}`);
+    } catch (copyError) {
+      setCopyError(toCopyErrorMessage(copyError));
+    } finally {
+      setCopyPending(false);
+    }
+  };
+
+  if (error) return <div className="p-6 text-[var(--accent-danger)]">{error}</div>;
+
+  if (shareType === "profile" || shareType === "public-profile") {
+    const totalDownloadCount = (profile?.sheets || []).reduce(
+      (sum, sheet) => sum + (sheet.downloadedByUsernames?.length || 0),
+      0
+    );
+    const totalCopyCount = (profile?.sheets || []).reduce(
+      (sum, sheet) => sum + (sheet.copiedByUsernames?.length || 0),
+      0
+    );
+    const allDownloadedUsers = (profile?.sheets || []).flatMap((sheet) =>
+      (sheet.downloadedByUsernames || []).map((usernameEntry) => ({
+        username: usernameEntry,
+        sheetTitle: sheet.title,
+      }))
+    );
+    const allCopiedUsers = (profile?.sheets || []).flatMap((sheet) =>
+      (sheet.copiedByUsernames || []).map((usernameEntry) => ({
+        username: usernameEntry,
+        sheetTitle: sheet.title,
+      }))
+    );
+    const profileLinks = [
+      { label: "Website", href: normalizePublicUrl(profile?.websiteUrl) },
+      { label: "GitHub", href: normalizePublicUrl(profile?.githubUrl) },
+      { label: "LinkedIn", href: normalizePublicUrl(profile?.linkedinUrl) },
+      { label: "Resume", href: normalizePublicUrl(profile?.resumeUrl) },
+    ].filter((item) => item.href);
+    const isOwnProfile = Boolean(profile?.viewerIsOwner) || currentUser?.username === profile?.username;
+    const followers = profile?.followers || [];
+    const following = profile?.following || [];
+    const isFollowingProfile = typeof profile?.viewerFollowsProfile === "boolean"
+      ? profile.viewerFollowsProfile
+      : followers.some((entry) => entry.username === currentUser?.username);
+    const profileFollowsViewer = Boolean(profile?.profileFollowsViewer);
+    const publicSheets = profile?.sheets || [];
+    const profileName = profile?.name || profile?.username || "Create Sheets user";
+    const verifiedPlatformCount = profile?.codingStats?.profiles?.length || 0;
+    const totalCodingSolved = profile?.codingStats?.aggregate?.totalSolved || 0;
+    const recentSheets = [...publicSheets]
+      .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())
+      .slice(0, 3);
+
+    const downloadedActivity = allDownloadedUsers.map((entry, index) => ({
+      id: `download-${entry.username}-${entry.sheetTitle}-${index}`,
+      text: `@${entry.username} downloaded "${entry.sheetTitle}"`,
+    }));
+    const copiedActivity = allCopiedUsers.map((entry, index) => ({
+      id: `copy-${entry.username}-${entry.sheetTitle}-${index}`,
+      text: `@${entry.username} copied "${entry.sheetTitle}"`,
+    }));
+    const activityFeed = [...downloadedActivity, ...copiedActivity].slice(0, 20);
+
+    const tabs = ["Sheets", "Coding Stats", "Activity", "Portfolio", "Stats"];
+    const cardClassName = "surface-card p-5";
+    const elevatedCardClassName = "surface-card surface-card-elevated p-4";
+    const statPillClassName = "btn-base btn-neutral w-full px-3 py-2 text-left text-sm";
+    const tabButtonBaseClassName = "btn-base rounded-lg px-4 py-2 text-sm font-medium";
+    const linkButtonClassName = "btn-base btn-neutral rounded-lg px-3 py-1 text-sm";
+
+    return (
+      <AppShell title={`@${profile?.username || "profile"}`} subtitle="Public profile view" theme={theme} onThemeChange={onThemeChange} userLabel={currentUser?.username || "Guest"}>
+        <SeoMeta
+          title={activeTitle}
+          description={activeDescription}
+          path={canonicalPath}
+          type="profile"
+          keywords={["public sheets", "DSA sheets", "coding sheets", "revision sheets"]}
+          structuredData={[breadcrumbSchema, pageSchema]}
+        />
+        <div className="mx-auto max-w-6xl space-y-5 text-[var(--text-primary)]">
+          <section className={`${cardClassName} overflow-hidden p-0`}>
+            <div className="bg-[radial-gradient(circle_at_top_left,color-mix(in_srgb,var(--accent-primary)_18%,transparent),transparent_32%),linear-gradient(135deg,color-mix(in_srgb,var(--surface-elevated)_94%,transparent),var(--surface))] p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="relative">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--accent-info)_16%,var(--surface-elevated))] text-xl font-semibold text-[color-mix(in_srgb,var(--accent-info)_62%,white)]">
+                    {profileName
+                      .split(" ")
+                      .slice(0, 2)
+                      .map((part) => part[0])
+                      .join("")}
+                  </div>
+                  <PremiumLotusBadge
+                    active={Boolean(profile?.premiumActive)}
+                    size="avatar"
+                    className="absolute -bottom-1 -right-1"
+                  />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-semibold text-[var(--text-primary)] inline-flex items-center gap-2">
+                    <span>{profileName}</span>
+                    <PremiumLotusBadge active={Boolean(profile?.premiumActive)} size="sm" />
+                  </h2>
+                  <p className="meta-text mt-1">@{profile?.username || "unknown"}</p>
+                  {profile?.headline ? <p className="mt-2 max-w-2xl text-sm font-medium text-[var(--text-primary)]">{profile.headline}</p> : null}
+                  {(profile?.institution || profile?.company) && (
+                    <p className="meta-text mt-1">{[profile?.institution, profile?.company].filter(Boolean).join(" · ")}</p>
+                  )}
+                  {profile?.location ? <p className="meta-text mt-1">{profile.location}</p> : null}
+                </div>
+              </div>
+              {currentUser?.token && !isOwnProfile && (
+                <div className="flex flex-col items-end gap-2">
+                  {profileFollowsViewer && <span className="meta-text text-xs">Follows you</span>}
+                  <button
+                    className="btn-base btn-primary min-w-28"
+                    type="button"
+                    disabled={followPending}
+                    onClick={async () => {
+                      if (!profile?.username) return;
+                      setFollowPending(true);
+                      try {
+                        if (isFollowingProfile) {
+                          await unfollowUser(currentUser.token, profile.username);
+                        } else {
+                          await followUser(currentUser.token, profile.username);
+                        }
+                        const refreshed = await loadProfileForRoute(profile.username);
+                        setProfile(refreshed);
+                      } finally {
+                        setFollowPending(false);
+                      }
+                    }}
+                  >
+                    {followPending ? "Loading..." : isFollowingProfile ? "Unfollow" : "Follow"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {profile?.bio ? (
+              <p className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-[var(--text-secondary)]">{profile.bio}</p>
+            ) : null}
+
+            {profileLinks.length > 0 ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {profileLinks.map((link) => (
+                  <a key={link.label} href={link.href} target="_blank" rel="noreferrer" className={linkButtonClassName}>
+                    {link.label}
+                  </a>
+                ))}
+              </div>
+            ) : null}
+            </div>
+
+            <div className="mt-4 grid gap-2 px-5 text-sm sm:grid-cols-2 lg:grid-cols-6">
+              <button
+                className={statPillClassName}
+                type="button"
+                onClick={() =>
+                  setEngagementViewer({
+                    title: `Followers of @${profile?.username}`,
+                    users: followers.map((entry) => ({ ...entry, sheetTitle: "" })),
+                  })
+                }
+              >
+                Followers: {profile?.followersCount ?? followers.length}
+              </button>
+              <button
+                className={statPillClassName}
+                type="button"
+                onClick={() =>
+                  setEngagementViewer({
+                    title: `Following by @${profile?.username}`,
+                    users: following.map((entry) => ({ ...entry, sheetTitle: "" })),
+                  })
+                }
+              >
+                Following: {profile?.followingCount ?? following.length}
+              </button>
+              <button
+                className={statPillClassName}
+                type="button"
+                onClick={() => setEngagementViewer({ title: "Downloaded by", users: allDownloadedUsers })}
+              >
+                Downloads: {totalDownloadCount}
+              </button>
+              <button
+                className={statPillClassName}
+                type="button"
+                onClick={() => setEngagementViewer({ title: "Copied by", users: allCopiedUsers })}
+              >
+                Copies: {totalCopyCount}
+              </button>
+              <div className={`${statPillClassName} cursor-default`}>
+                Coding: {totalCodingSolved}
+              </div>
+              <div className={`${statPillClassName} cursor-default`}>
+                Platforms: {verifiedPlatformCount}
+              </div>
+            </div>
+
+            <div className="mx-5 mt-5 flex flex-wrap gap-2 border-t border-[var(--border-subtle)] pb-5 pt-4">
+              {tabs.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  className={`${tabButtonBaseClassName} ${
+                    tab === activeProfileTab ? "btn-primary" : "btn-ghost text-[var(--text-secondary)]"
+                  }`}
+                  onClick={() => setActiveProfileTab(tab)}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {activeProfileTab === "Sheets" && (
+            <section className="grid gap-5 lg:grid-cols-[2fr_1fr]">
+              <div className="space-y-5">
+                <div className={cardClassName}>
+                  <h2 className="section-title text-lg">Recently updated sheets</h2>
+                  {recentSheets.length === 0 ? (
+                    <p className="meta-text mt-3">No public sheets yet.</p>
+                  ) : (
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      {recentSheets.map((sheet) => (
+                        <a
+                          key={sheet.id}
+                          href={getPublicSheetPath(profile?.username || username, sheet.title || "Untitled Sheet")}
+                          className={`${elevatedCardClassName} block transition hover:-translate-y-0.5`}
+                        >
+                          <p className="card-title">{sheet.title}</p>
+                          <p className="meta-text mt-1 text-xs">
+                            {sheet.updatedAt ? new Date(sheet.updatedAt).toLocaleDateString() : "No update date"}
+                          </p>
+                          <p className="meta-text mt-2 text-xs underline-offset-2 hover:underline">Open sheet</p>
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className={cardClassName}>
+                  <h2 className="section-title text-lg">Public sheets</h2>
+                  <div className="mt-4 space-y-2">
+                    {publicSheets.length === 0 ? (
+                      <p className="meta-text">No public sheets shared yet.</p>
+                    ) : (
+                      publicSheets.map((sheet) => (
+                        <div className="surface-card surface-card-elevated flex items-center justify-between gap-3 p-3" key={sheet.id}>
+                          <div className="flex items-center gap-3">
+                            <a href={getPublicSheetPath(profile.username, sheet.title)} className="card-title underline-offset-2 hover:underline">
+                              {sheet.title}
+                            </a>
+                            {profile?.username && (
+                              <a
+                                href={getPublicSheetPath(profile.username, sheet.title)}
+                                className="text-sm text-[var(--text-secondary)] underline-offset-2 hover:text-[var(--accent-info)] hover:underline"
+                              >
+                                Open clean URL
+                              </a>
+                            )}
+                          </div>
+                          {currentUser?.token && !isOwnProfile ? (
+                            <button
+                              type="button"
+                              className="btn-base btn-primary px-3 py-1.5 text-sm"
+                              onClick={async () => {
+                                await handleCopySheet({
+                                  sourceSheetId: sheet.id,
+                                  sourceShareId: sheet.shareId,
+                                  customTitle: sheet.title || "Untitled Sheet",
+                                });
+                              }}
+                            >
+                              Copy Sheet
+                            </button>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <aside>
+                <div className={`${cardClassName} bg-[linear-gradient(145deg,color-mix(in_srgb,var(--accent-info)_12%,var(--surface-elevated)),color-mix(in_srgb,var(--surface)_90%,transparent))]`}>
+                  <p className="meta-text text-sm">Profile overview</p>
+                  <p className="section-title mt-2 text-lg">{profile?.totalSheets ?? publicSheets.length} public sheets</p>
+                  <p className="meta-text mt-1">{totalDownloadCount} total downloads · {totalCopyCount} total copies</p>
+                </div>
+              </aside>
+            </section>
+          )}
+
+          {activeProfileTab === "Activity" && (
+            <section className={cardClassName}>
+              <h2 className="section-title text-lg">Recent activity</h2>
+              {activityFeed.length === 0 ? (
+                <p className="meta-text mt-3">No public engagement recorded yet.</p>
+              ) : (
+                <ul className="mt-4 space-y-2 text-sm text-[var(--text-secondary)]">
+                  {activityFeed.map((activity) => (
+                    <li key={activity.id} className={elevatedCardClassName}>
+                      {activity.text}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
+          {activeProfileTab === "Coding Stats" && (
+            <CodingStatsPanel
+              codingStats={profile?.codingStats}
+              title={`${profile?.username || "Profile"} Coding Stats`}
+              publicSheets={publicSheets}
+              profile={profile}
+              showRail={Boolean(profile?.codingStats?.profiles?.length)}
+            />
+          )}
+
+          {activeProfileTab === "Portfolio" && (
+            <PortfolioShowcase profile={profile} isOwner={isOwnProfile} />
+          )}
+
+          {activeProfileTab === "Stats" && (
+            <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {[
+                { label: "Public Sheets", value: profile?.totalSheets ?? publicSheets.length },
+                { label: "Followers", value: profile?.followersCount ?? followers.length },
+                { label: "Downloads", value: totalDownloadCount },
+                { label: "Copies", value: totalCopyCount },
+                { label: "Verified Platforms", value: verifiedPlatformCount },
+                { label: "Coding Solved", value: totalCodingSolved },
+              ].map((stat) => (
+                <div key={stat.label} className={cardClassName}>
+                  <p className="caption-text text-xs">{stat.label}</p>
+                  <p className="section-title mt-2 text-2xl">{stat.value}</p>
+                </div>
+              ))}
+            </section>
+          )}
+        </div>
+        {engagementViewer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-backdrop)] p-4">
+            <div className="surface-card w-full max-w-lg rounded-xl p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-lg font-semibold">{engagementViewer.title}</h3>
+                <button
+                  type="button"
+                  className="btn-base btn-neutral btn-sm rounded px-2 py-1 text-xs"
+                  onClick={() => setEngagementViewer(null)}
+                >
+                  Close
+                </button>
+              </div>
+              {engagementViewer.users.length === 0 ? (
+                <p className="meta-text text-sm">No users yet.</p>
+              ) : (
+                <div className="max-h-72 space-y-2 overflow-auto">
+                  {engagementViewer.users.map((entry, index) => (
+                    <div
+                      key={`${entry.username}-${entry.sheetTitle}-${index}`}
+                      className="rounded border border-[var(--border-subtle)] bg-[var(--surface-elevated)]/55 p-2 text-sm"
+                    >
+                      <p className="font-medium inline-flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="hover:underline"
+                          onClick={() => navigateTo(`/profile/${entry.username}`)}
+                        >
+                          @{entry.username}
+                        </button>
+                        <PremiumLotusBadge active={Boolean(entry?.premiumActive)} size="sm" />
+                      </p>
+                      {entry.sheetTitle ? (
+                        <p className="meta-text text-xs">Sheet: {entry.sheetTitle || "Untitled Sheet"}</p>
+                      ) : (
+                        <p className="meta-text text-xs">{entry.name ? entry.name : "Create Sheets user"}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell
+      title={null}
+      subtitle={null}
+      titleActions={canToggleSharedProgress ? (
+        <button
+          type="button"
+          className="btn-base btn-neutral px-3 py-1.5 text-sm"
+          onClick={() => setShowSharedProgress((value) => !value)}
+        >
+          {isProgressVisible ? "Hide Progress" : "Show Progress"}
+        </button>
+      ) : null}
+      theme={theme}
+      onThemeChange={onThemeChange}
+      userLabel={currentUser?.username || "Guest"}
+      headerActions={(
+        <div className="flex items-center gap-2">
+          {!isOwnerViewingSheet && <span className="rounded-full border border-[var(--border-subtle)] px-2 py-1 text-xs text-[var(--text-secondary)]">Read only</span>}
+          {currentUser?.token && sharedSheet && (
+            <button
+              type="button"
+              className="btn-base btn-neutral px-3 py-1.5 text-sm"
+              onClick={async () => {
+                try {
+                  await trackSheetEngagement(currentUser.token, sharedSheet.id, "download");
+                } catch {
+                  // no-op; download should not be blocked
+                }
+                exportSheetAsJson({
+                  sheetTitle: sharedSheet.title,
+                  logoUrl: sharedSheet.logoUrl || "",
+                  sheetUrl: sharedSheet.sheetUrl || "",
+                  topics: sharedSheet.topics || [],
+                });
+              }}
+            >
+              Download JSON
+            </button>
+          )}
+          {currentUser?.token && sharedSheet && !isOwnerViewingSheet && (
+            <button type="button" className="btn-base btn-primary px-3 py-1.5 text-sm" onClick={() => setShowRemixModal(true)}>
+              Copy Sheet
+            </button>
+          )}
+        </div>
+      )}
+    >
+      <SeoMeta
+        title={activeTitle}
+        description={activeDescription}
+        path={canonicalPath}
+        keywords={["public dsa sheet", "coding practice sheet", "interview preparation sheet"]}
+        structuredData={[breadcrumbSchema, pageSchema]}
+      />
+      <SheetHeader
+        title={sharedSheet?.title || sheetTitle}
+        description={sharedSheet?.description || ""}
+        logoUrl={sharedSheet?.logoUrl || ""}
+        completedCount={sharedSheetProgress.completedQuestions}
+        totalCount={sharedSheetProgress.totalQuestions}
+        updatedAt={sharedSheet?.updatedAt}
+        metadata={[
+          { label: "Access", value: isOwnerViewingSheet ? "Owner view" : "Public read-only" },
+        ]}
+        downloadsCount={sharedSheet?.downloadedByUsernames?.length}
+        copiesCount={sharedSheet?.copiedByUsernames?.length}
+        onDownloadsClick={downloadedUsers.length ? (() => setEngagementViewer({ title: "Downloaded by", users: downloadedUsers })) : undefined}
+        onCopiesClick={copiedUsers.length ? (() => setEngagementViewer({ title: "Copied by", users: copiedUsers })) : undefined}
+      />
+      <div className="grid gap-4 xl:grid-cols-2">
+        <TopicDistributionChart topics={sharedSheet?.topics || []} topicTags={sharedSheet?.topicTags || []} />
+        <DifficultyDistributionWidget topics={sharedSheet?.topics || []} categories={DEFAULT_DIFFICULTY_CATEGORIES} showCompleted={isProgressVisible} />
+      </div>
+      <TopicList
+        isEditing={isOwnerViewingSheet}
+        allowReorder={isOwnerViewingSheet}
+        allowProgressToggle={isOwnerViewingSheet && isProgressVisible}
+        showAttemptInsights={isProgressVisible}
+        onRequireCopy={() => setCopyPromptOpen(true)}
+        topicTags={sharedSheet?.topicTags || []}
+      />
+      {canToggleSharedProgress && !isProgressVisible && (
+        <p className="meta-text mt-2 text-sm">
+          Progress is hidden in this view. Click <strong>Show Progress</strong> to view solved ticks, attempts, and progress bars.
+        </p>
+      )}
+      {!isOwnerViewingSheet && username && (
+        <div className="mx-auto mt-4 w-full max-w-3xl">
+          <div className="surface-card surface-card-elevated flex items-center justify-between gap-3 p-3">
+            <div className="min-w-0">
+              <p className="caption-text text-xs">Sheet owner</p>
+              <p className="card-title inline-flex items-center gap-2">
+                <span>@{profile?.username || username}</span>
+                <PremiumLotusBadge active={Boolean(profile?.premiumActive)} size="sm" />
+              </p>
+            </div>
+            <a href={`/profile/${profile?.username || username}`} className="btn-base btn-neutral px-3 py-1.5 text-sm">
+              View profile
+            </a>
+          </div>
+        </div>
+      )}
+      {engagementViewer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-backdrop)] p-4">
+          <div className="surface-card w-full max-w-md space-y-4 p-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">{engagementViewer.title}</h3>
+              <button type="button" className="btn-base btn-neutral rounded-md px-2 py-1" onClick={() => setEngagementViewer(null)}></button>
+            </div>
+            {engagementViewer.users.length === 0 ? (
+              <p className="meta-text text-sm">No users yet.</p>
+            ) : (
+              <div className="max-h-72 space-y-2 overflow-auto">
+                {engagementViewer.users.map((entry, index) => (
+                  <div key={`${entry.username}-${index}`} className="rounded border border-[var(--border-subtle)] bg-[var(--surface-elevated)]/55 p-2 text-sm">
+                    <p className="font-medium">@{entry.username}</p>
+                    {entry.sheetTitle ? <p className="meta-text text-xs">Sheet: {entry.sheetTitle}</p> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {showRemixModal && !isOwnerViewingSheet && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-backdrop)] p-4 backdrop-blur-sm">
+          <div className="surface-card w-full max-w-xl rounded-2xl shadow-2xl">
+            <div className="flex items-center justify-between px-6 py-4">
+              <h2 className="section-title text-xl font-semibold">Remix Sheet</h2>
+              <button
+                type="button"
+                className="btn-base btn-neutral btn-sm rounded-md px-2 py-1"
+                onClick={() => {
+                  setShowRemixModal(false);
+                  setCopyError("");
+                }}
+              >
+                
+              </button>
+            </div>
+            <div className="border-t border-[var(--border-subtle)]" />
+            <div className="space-y-5 px-6 py-5 text-[var(--text-primary)]">
+              <label className="block text-sm font-medium" htmlFor="remix-title-input">
+                New Title:
+              </label>
+              <input
+                id="remix-title-input"
+                className="field-base w-full rounded-md px-3 py-2 text-sm"
+                value={remixTitle}
+                onChange={(event) => setRemixTitle(event.target.value)}
+              />
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={keepAttribution}
+                    onChange={(event) => setKeepAttribution(event.target.checked)}
+                  />
+                  Keep Original Creator Attribution
+                </label>
+              </div>
+            </div>
+            <div className="border-t border-[var(--border-subtle)]" />
+            <div className="flex justify-end px-6 py-4">
+              <button
+                type="button"
+                className="btn-base btn-primary rounded-md px-4 py-2 text-sm font-semibold shadow-sm disabled:cursor-not-allowed"
+                disabled={copyPending}
+                onClick={async () => {
+                  if (!currentUser?.token || !sharedSheet) return;
+                  const computedTitle = buildRemixCopyTitle({
+                    sharedSheetTitle: sharedSheet.title,
+                    remixTitle,
+                    keepAttribution,
+                    ownerUsername: username,
+                  });
+                  await handleCopySheet({
+                    customTitle: computedTitle,
+                  });
+                }}
+              >
+                {copyPending ? "Creating..." : "Create Remix"}
+              </button>
+            </div>
+            {copyError ? <p className="px-6 pb-4 text-sm text-[var(--accent-danger)]">{copyError}</p> : null}
+          </div>
+        </div>
+      )}
+      {copyPromptOpen && !isOwnerViewingSheet && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-backdrop)] p-4">
+          <div className="surface-card w-full max-w-md p-5">
+            <h3 className="section-title text-lg">Copy this sheet to track your own progress.</h3>
+            <p className="meta-text mt-2 text-sm">This public sheet is read-only. Create your own copy to mark questions complete.</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="btn-base btn-neutral px-3 py-2 text-sm"
+                onClick={() => {
+                  setCopyPromptOpen(false);
+                  setCopyError("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-base btn-primary px-3 py-2 text-sm"
+                disabled={copyPending}
+                onClick={() =>
+                  handleCopySheet({
+                    sourceSheetId: sharedSheet?.id,
+                    sourceShareId: sharedSheet?.shareId || shareId,
+                  })
+                }
+              >
+                {copyPending ? "Copying..." : currentUser?.token ? "Copy Sheet" : "Sign in to copy"}
+              </button>
+            </div>
+            {copyError ? <p className="mt-3 text-sm text-[var(--accent-danger)]">{copyError}</p> : null}
+          </div>
+        </div>
+      )}
+    </AppShell>
+  );
+}
+
+export default SharedPage;

@@ -1,0 +1,760 @@
+# Redis Cache And API Latency Log
+
+This file records the Redis/API latency optimization work for CreateSheets. It intentionally avoids secrets, tokens, passwords, PEM contents, `.env` values, MongoDB connection strings, and private user data.
+
+## 2026-06-02 22:08 IST - User Request
+
+- Step: Received request to reduce API latency and log everything in `redis.md`.
+- User concern:
+  - API timing still showed around `179 ms` even after Redis caching.
+- Requested actions:
+  - Make frontend API calls use same-origin `/api/...` where possible instead of `https://api.createsheets.com/api/...`.
+  - Add Redis cache diagnostics such as `X-Cache` or `Server-Timing` headers.
+  - Put everything done and why in this file.
+- Why:
+  - Same-origin API calls avoid the browser treating frontend/API as separate origins.
+  - This can reduce CORS/preflight overhead and often lets the browser reuse the same site connection behavior more cleanly.
+  - Cache diagnostic headers make it visible in browser DevTools whether Redis returned a cached response.
+- Error, if any: None.
+- Next action: Inspect frontend API base URL resolution and backend public Redis cache code.
+
+## 2026-06-02 22:09 IST - Initial Inspection
+
+- Step: Inspected current git state, frontend API config, backend Redis cache code, production Compose config, and live Redis state.
+- Commands:
+  - `git status -sb`
+  - `rg -n "VITE_.*API|API_BASE|api\\.createsheets|baseURL|axios|fetch\\(|/api/" src Dockerfile docker-compose.prod.yml deploy .github -g '!node_modules'`
+  - `rg -n "PublicReadCacheService|getOrLoad\\(|CacheControl|Server-Timing|X-Cache|ResponseEntity|sitemap-public" backend/src/main/java backend/src/test/java`
+  - `find . -maxdepth 3 -iname 'redis.md' -o -iname '*redis*' | sort`
+  - `docker compose -f docker-compose.prod.yml config`
+  - `ssh ... 'cd /opt/createsheets/app && docker compose --env-file .env -f docker-compose.prod.yml ps redis && docker exec createsheets-redis redis-cli ping'`
+- Result: Success.
+- Output summary:
+  - Working tree has unrelated untracked files: `docs/HR.m4a`, `docs/Tech.m4a`, and `record.md`.
+  - Production Compose builds frontend with `VITE_API_BASE_URL` and `VITE_APP_API_BASE_URL` as empty strings.
+  - Frontend fallback in `src/config/envConfig.js` returns `https://api.createsheets.com` for `www.createsheets.com`.
+  - `src/config/apiConfig.js` also has a default API base of `https://api.createsheets.com`.
+  - Backend public Redis cache exists in `backend/src/main/java/com/iqms/backend/cache/PublicReadCacheService.java`.
+  - Public/read cache call sites include:
+    - `FeaturedSheetsService`
+    - `SitemapService`
+    - `ProfileShareService`
+  - Redis is running in production as `createsheets-redis`, using `redis:7-alpine`.
+  - Live Redis check returned `PONG`.
+- Why:
+  - The same-origin optimization belongs in the frontend API base URL resolution.
+  - Redis visibility belongs in the backend public cache service and public controllers.
+- Error, if any: None.
+- Next action: Patch frontend API fallback and backend Redis diagnostic response support.
+
+## 2026-06-02 22:14 IST - Frontend Same-Origin API Patch
+
+- Step: Changed frontend API fallback behavior.
+- Files changed:
+  - `src/config/envConfig.js`
+  - `src/config/apiConfig.js`
+- What changed:
+  - For `www.createsheets.com` and `createsheets.com`, `resolveApiBaseUrl()` now returns the current browser origin.
+  - The default API base fallback changed from `https://api.createsheets.com` to `/api`.
+- Why:
+  - Production Nginx already proxies `/api/` on `www.createsheets.com` to the backend container.
+  - Same-origin requests avoid cross-origin browser handling for normal frontend API calls.
+  - This can reduce preflight/connection overhead and makes DevTools timings easier to reason about.
+  - Local development remains safe because local no-env fallback was already `/api`.
+- Error, if any: None.
+- Next action: Add backend Redis cache diagnostic headers.
+
+## 2026-06-02 22:16 IST - Redis Diagnostic Header Patch
+
+- Step: Added request-scoped Redis cache diagnostics for public/read cache paths.
+- Files changed:
+  - `backend/src/main/java/com/iqms/backend/cache/PublicReadCacheService.java`
+  - `backend/src/main/java/com/iqms/backend/cache/PublicReadCacheDiagnosticsAdvice.java`
+  - `backend/src/main/java/com/iqms/backend/cache/PublicReadCacheDiagnosticsFilter.java`
+  - `src/api/__tests__/apiClient.test.js`
+  - `backend/src/test/java/com/iqms/backend/cache/PublicReadCacheServiceTest.java`
+- What changed:
+  - `PublicReadCacheService` now records request-local cache diagnostics when `getOrLoad(...)` is used.
+  - Redis cache statuses:
+    - `HIT`: Redis had the value.
+    - `MISS`: Redis did not have the value, loader ran, and Redis stored the fresh value.
+    - `BYPASS`: Redis read/write failed or value could not be stored, so the backend served from the loader without relying on Redis.
+    - `ERROR`: Loader threw an exception after cache lookup.
+  - Added `PublicReadCacheDiagnosticsAdvice` to add headers when public Redis cache diagnostics exist:
+    - `X-Cache: HIT|MISS|BYPASS|ERROR`
+    - `X-Cache-Store: redis`
+    - `Server-Timing: redis;desc="...";dur=...`
+  - Added `PublicReadCacheDiagnosticsFilter` to clear request-local diagnostics before and after each request.
+  - Added frontend test coverage that a same-origin `/api` base composes `/api/...` requests without duplicating the prefix.
+  - Added backend tests for Redis HIT, MISS, BYPASS, and diagnostic response headers.
+- Why:
+  - Browser DevTools can now show whether a public/read response came from Redis.
+  - The headers are only added when the public Redis cache service is used.
+  - Private/authenticated APIs remain uncached and do not receive misleading Redis cache headers.
+- Error, if any: None during patching.
+- Next action: Run focused frontend and backend tests.
+
+## 2026-06-02 22:14 IST - Focused Test Run Failed
+
+- Step: Ran focused frontend and backend tests after the first patch.
+- Commands:
+  - `npm test -- --run src/api/__tests__/apiClient.test.js`
+  - `mvn -f backend/pom.xml -Dtest=PublicReadCacheServiceTest test`
+  - `git diff --stat && git diff --check`
+- Result: Failed.
+- Output summary:
+  - `git diff --check` passed.
+  - Frontend test file ran, but the new assertion expected `/api/test`.
+  - Local test environment resolved API base to `http://localhost:8080`, likely because local env values are present.
+  - Backend test compilation ran, but tests errored before executing because Mockito could not mock `StringRedisTemplate` on Java 25.
+- Exact error summaries:
+  - Frontend: expected fetch to be called with `/api/test`, but it was called with `http://localhost:8080/api/test`.
+  - Backend: `Mockito cannot mock this class: class org.springframework.data.redis.core.StringRedisTemplate`.
+  - Backend root cause detail: Byte Buddy reported Java 25 class version support limitations for inline mocking.
+- Why the errors happened:
+  - The frontend test accidentally asserted the local default API base instead of explicitly testing same-origin URL composition.
+  - The backend service depended on the concrete `StringRedisTemplate`, which made the unit test require mocking a concrete Spring class.
+- Fix:
+  - Adjust frontend test to explicitly pass `baseUrl: "/api"` when testing same-origin URL composition.
+  - Change `PublicReadCacheService` to depend on `RedisOperations<String, String>`, which `StringRedisTemplate` implements in production and is easier/cleaner to mock in tests.
+- Next action: Patch tests and Redis service dependency type.
+
+## 2026-06-02 22:15 IST - Second Focused Test Run
+
+- Step: Re-ran focused tests after changing the Redis dependency to `RedisOperations`.
+- Commands:
+  - `npm test -- --run src/api/__tests__/apiClient.test.js`
+  - `mvn -f backend/pom.xml -Dtest=PublicReadCacheServiceTest test`
+  - `git diff --check`
+- Result: Partially successful.
+- Output summary:
+  - Frontend focused test passed: `1` test file, `5` tests.
+  - `git diff --check` passed.
+  - Backend Redis cache logic tests ran under Java 25 instead of failing during Mockito setup.
+  - Backend warnings were expected for the tests that intentionally simulate Redis read/write failures.
+  - One backend assertion failed in `responseAdviceAddsRedisCacheDiagnosticHeaders`.
+- Exact error:
+  - Expected servlet response header `X-Cache` to equal `HIT`, but it was `null`.
+- Why the error happened:
+  - The advice writes to Spring's `ServerHttpResponse` headers.
+  - The unit test checked the servlet mock response before the wrapper flushed those headers into the servlet response.
+- Fix:
+  - Assert against `ServletServerHttpResponse#getHeaders()` directly in the unit test.
+- Next action: Patch that backend test and rerun.
+
+## 2026-06-02 22:16 IST - Focused Tests Passed
+
+- Step: Re-ran the focused backend test after correcting the header assertion.
+- Commands:
+  - `mvn -f backend/pom.xml -Dtest=PublicReadCacheServiceTest test`
+  - `git diff --check`
+- Result: Success.
+- Output summary:
+  - Backend Redis diagnostic test file passed: `5` tests.
+  - `git diff --check` passed.
+  - Maven build for the focused test completed successfully.
+  - Test logs included Redis read/write failure stack traces because two tests intentionally simulate those failures to verify fail-open behavior.
+- Why the warnings are acceptable:
+  - `getOrLoadFallsBackToLoaderAndRecordsBypassWhenRedisReadFails` intentionally throws `redis down` from the mocked Redis read path.
+  - `getOrLoadRecordsBypassWhenRedisWriteFails` intentionally throws `redis write failed` from the mocked Redis write path.
+  - Both tests passed, proving the API can still serve data from the loader and report `BYPASS`.
+- Error, if any: None after the fix.
+- Next action: Run broader frontend/backend validation.
+
+## 2026-06-02 22:16 IST - Broad Validation Run
+
+- Step: Ran frontend build, all frontend tests, full backend tests, and production Compose render.
+- Commands:
+  - `npm run build`
+  - `npm test -- --run`
+  - `mvn -f backend/pom.xml test`
+  - `docker compose -f docker-compose.prod.yml config >/tmp/createsheets-prod-redis-config.yml && echo 'prod compose ok'`
+- Result: Partially successful.
+- Output summary:
+  - Frontend production build passed.
+  - Frontend test suite passed: `16` test files, `67` tests.
+  - Production Compose rendered successfully.
+  - Full backend test suite failed locally under Java 25.
+- Exact backend failure pattern:
+  - Multiple existing tests failed before executing because Mockito/Byte Buddy could not mock concrete classes such as:
+    - `TokenService`
+    - `PublicReadCacheService`
+    - `ActionQueueService`
+  - Byte Buddy reported Java 25 class version support limitations.
+- Why:
+  - The local default Java runtime is Java 25.
+  - The project CI/backend target is Java 17/21-style execution, and previous CI runs used supported Java versions.
+  - This is an environment/tooling mismatch rather than a Redis feature failure.
+- Fix/action:
+  - Detect installed Java versions with `/usr/libexec/java_home -V`.
+  - Re-run backend tests with Java 21, which is installed locally and compatible with the current Mockito/Byte Buddy stack.
+- Error, if any:
+  - Full backend test command failed under Java 25.
+- Next action: Run backend tests and package using Java 21.
+
+## 2026-06-02 22:17 IST - Java 21 Backend Validation And Final Local Checks
+
+- Step: Re-ran backend validation with Java 21 and completed final local checks.
+- Commands:
+  - `/usr/libexec/java_home -V`
+  - `JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn -f backend/pom.xml test`
+  - `JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn -f backend/pom.xml clean package -DskipTests`
+  - `npm run lint`
+  - `test -f backend/target/iqms-backend-0.0.1-SNAPSHOT.jar && echo 'backend jar exists'`
+  - `git diff --check`
+- Result: Success.
+- Output summary:
+  - Java 21 is installed at `/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home`.
+  - Backend tests passed under Java 21: `37` tests, `0` failures, `0` errors.
+  - Backend production JAR was built successfully.
+  - Frontend lint passed with warnings only.
+  - Backend JAR exists at `backend/target/iqms-backend-0.0.1-SNAPSHOT.jar`.
+  - `git diff --check` passed.
+- Warnings:
+  - `npm run lint` reported two pre-existing React hook dependency warnings:
+    - `src/pages/AlarmsPage.jsx`
+    - `src/pages/SheetPage.jsx`
+  - Backend tests emitted intentional Redis failure logs from the new fail-open tests.
+  - Maven reported the existing deprecated API note for `GoogleTokenVerifierService`.
+- Error, if any: None after using Java 21.
+- Next action: Review final diff, commit, push to `main`, watch CI/CD, and verify production headers/timings.
+
+## 2026-06-02 22:18 IST - Pre-Commit Review
+
+- Step: Reviewed final diff and checked for stale API subdomain fallback in frontend source/build output.
+- Commands:
+  - `git diff --stat`
+  - `git diff -- src/config/envConfig.js src/config/apiConfig.js src/api/__tests__/apiClient.test.js`
+  - `git diff -- backend/src/main/java/com/iqms/backend/cache/PublicReadCacheService.java backend/src/main/java/com/iqms/backend/cache/PublicReadCacheDiagnosticsAdvice.java backend/src/main/java/com/iqms/backend/cache/PublicReadCacheDiagnosticsFilter.java backend/src/test/java/com/iqms/backend/cache/PublicReadCacheServiceTest.java`
+  - `sed -n '1,260p' redis.md`
+  - `rg -n "api\\.createsheets\\.com" dist src/config src/api 2>/dev/null || true`
+  - `git status -sb`
+  - `git diff --check`
+- Result: Success.
+- Output summary:
+  - `git diff --check` passed.
+  - No `api.createsheets.com` fallback string was found in `dist`, `src/config`, or `src/api`.
+  - Final changed/added files are the API config, Redis diagnostics, tests, and this log file.
+  - Unrelated untracked files remain untouched:
+    - `docs/HR.m4a`
+    - `docs/Tech.m4a`
+    - `record.md`
+- Error, if any: None.
+- Next action: Stage only relevant files, commit, push to `main`, and watch CI/CD.
+
+## 2026-06-02 22:19 IST - Commit And First Push Attempt
+
+- Step: Staged relevant files and committed the Redis/API optimization.
+- Commands:
+  - `git add backend/src/main/java/com/iqms/backend/cache/PublicReadCacheService.java backend/src/main/java/com/iqms/backend/cache/PublicReadCacheDiagnosticsAdvice.java backend/src/main/java/com/iqms/backend/cache/PublicReadCacheDiagnosticsFilter.java backend/src/test/java/com/iqms/backend/cache/PublicReadCacheServiceTest.java src/api/__tests__/apiClient.test.js src/config/apiConfig.js src/config/envConfig.js redis.md`
+  - `git status -sb`
+  - `git commit -m "Add Redis cache diagnostics and same-origin API"`
+  - `git push origin HEAD:main`
+  - `git fetch origin main`
+- Result: Push failed, fetch succeeded.
+- Output summary:
+  - Created local commit `3569a22 Add Redis cache diagnostics and same-origin API`.
+  - First push to `main` was rejected with `fetch first`.
+  - Fetch showed `origin/main` moved from `b528d69` to `7746d21`.
+  - New remote commit: `7746d21 Update ContactPage.jsx`.
+- Why:
+  - Someone or another process pushed to `main` after this local branch last fetched.
+  - Git correctly rejected the push to avoid overwriting remote history.
+- Fix:
+  - Rebase this Redis/API commit on top of current `origin/main`.
+  - Push again after the rebase.
+- Error, if any:
+  - `git push origin HEAD:main` failed due to non-fast-forward.
+- Next action: Rebase on `origin/main`, resolve any conflicts if needed, then push again.
+
+## 2026-06-02 22:20 IST - Rebase After Remote Main Moved
+
+- Step: Rebased the Redis/API commit on top of the latest `origin/main`.
+- Commands:
+  - `git add redis.md && git commit --amend --no-edit`
+  - `git rebase origin/main`
+- Result: Success.
+- Output summary:
+  - Amended `redis.md` into the Redis/API commit before rebasing.
+  - Rebase completed successfully.
+  - No conflicts occurred.
+  - The remote `ContactPage.jsx` change was preserved.
+- Error, if any: None.
+- Next action: Push the rebased commit to `main`.
+
+## 2026-06-02 22:21 IST - Push, CI/CD, And Production Deployment
+
+- Step: Pushed the rebased Redis/API commit to `main` and watched GitHub Actions.
+- Commands:
+  - `git add redis.md && git commit --amend --no-edit && git push origin HEAD:main`
+  - `gh run list --branch main --limit 8 --json databaseId,status,conclusion,displayTitle,headSha,workflowName,url`
+  - `gh run watch 26834639530 --exit-status`
+  - `gh run view 26834639530 --job 79125276128 --log | tail -120`
+- Result: Success.
+- Output summary:
+  - Pushed commit `94f9006 Add Redis cache diagnostics and same-origin API` to `main`.
+  - GitHub Actions run `26834639530` completed successfully.
+  - Production config checks passed.
+  - Frontend checks passed: install, lint, build, tests.
+  - Backend checks passed: tests and production JAR build.
+  - Deploy job passed:
+    - Synced repository to EC2.
+    - Rebuilt frontend/backend Docker images.
+    - Recreated backend and frontend containers.
+    - Redis remained healthy.
+    - Backend became healthy.
+    - Nginx config test passed.
+    - Nginx reloaded.
+    - Public URL checks passed.
+- Deployment output summary:
+  - `createsheets-redis` returned `PONG`.
+  - Backend local health returned status `ok`.
+  - Host Nginx reported `configuration file /etc/nginx/nginx.conf test is successful`.
+  - Public checks for `https://www.createsheets.com`, `https://www.createsheets.com/api/health`, and `https://api.createsheets.com/api/health` passed.
+- Warnings:
+  - GitHub Actions reported Node.js 20 deprecation warnings for existing actions.
+  - `webfactory/ssh-agent` post-cleanup printed a non-blocking cleanup warning: `The "file" argument must be of type string. Received undefined`.
+- Error, if any: None blocking.
+- Next action: Verify live Redis diagnostic headers, steady-state timings, same-origin frontend bundle behavior, and EC2 container health.
+
+## 2026-06-02 22:23 IST - Production Redis Header And Timing Verification
+
+- Step: Verified live cache headers and response timings after deployment.
+- Commands:
+  - `curl -sS --max-time 15 -D - -o /dev/null https://www.createsheets.com/api/sheets/featured`
+  - `curl -sS --max-time 15 -D - -o /dev/null https://api.createsheets.com/api/sheets/featured`
+  - `curl -sS --max-time 15 -D - -o /dev/null https://www.createsheets.com/sitemap-public-sheets.xml`
+  - `for i in 1 2 3 4 5; do curl ... https://www.createsheets.com/api/sheets/featured; done`
+  - `ssh ... 'for i in 1 2 3 4 5; do curl ... http://127.0.0.1:18080/api/sheets/featured; done'`
+- Result: Success.
+- Output summary:
+  - `https://www.createsheets.com/api/sheets/featured` returns:
+    - `X-Cache`
+    - `X-Cache-Store: redis`
+    - `Server-Timing: redis;desc="...";dur=...`
+  - `https://api.createsheets.com/api/sheets/featured` returns the same Redis diagnostic headers.
+  - `https://www.createsheets.com/sitemap-public-sheets.xml` also returns Redis diagnostic headers because sitemap XML uses the public Redis cache service.
+  - First repeated `www` featured request after deployment was `MISS`, then the next requests were `HIT`.
+  - Steady `www` featured requests:
+    - HTTP `200`
+    - `X-Cache: HIT`
+    - `Server-Timing` Redis duration around `1.0` to `1.5 ms`
+    - public total time around `103` to `109 ms` from this local machine.
+  - Internal EC2/backend requests:
+    - HTTP `200`
+    - `X-Cache: HIT`
+    - `Server-Timing` Redis duration around `1.1` to `2.0 ms`
+    - total backend/container time around `4` to `6 ms`.
+- Why the public request still shows about `100 ms`:
+  - Redis/backend work is only about `1` to `2 ms`.
+  - The remaining time is public internet, DNS/TCP/TLS, host Nginx, and network distance.
+- Error, if any: None.
+- Next action: Verify the deployed frontend bundle no longer contains the API subdomain fallback.
+
+## 2026-06-02 22:24 IST - Same-Origin Frontend Bundle Verification
+
+- Step: Checked the deployed frontend bundle for the old API subdomain fallback.
+- Commands:
+  - `curl -sS --max-time 15 https://www.createsheets.com -o "$tmp_html"`
+  - `rg -o '/assets/[^" ]+\\.js' "$tmp_html" | head -1`
+  - `curl -sS --max-time 15 "https://www.createsheets.com$js" | rg -q 'api\\.createsheets\\.com'`
+- Result: Success.
+- Output summary:
+  - Deployed JS asset found: `/assets/index-B0_U-eSL.js`.
+  - `api.createsheets.com` was not found in the deployed frontend bundle.
+  - Expected `/api/...` route strings remain in the bundle, which is correct for same-origin API calls.
+- Why:
+  - This confirms the production frontend is not carrying the old `https://api.createsheets.com` fallback in its shipped JavaScript.
+- Error, if any: None.
+- Next action: Check EC2 containers and memory.
+
+## 2026-06-02 22:24 IST - EC2 Container And Redis State Check
+
+- Step: Checked Docker container health, memory, and Redis keys on EC2.
+- Commands:
+  - `ssh ... 'cd /opt/createsheets/app && docker compose --env-file .env -f docker-compose.prod.yml ps && docker stats --no-stream --format "{{.Name}} {{.CPUPerc}} {{.MemUsage}}" createsheets-backend createsheets-frontend createsheets-redis'`
+  - `ssh ... 'cd /opt/createsheets/app && docker compose --env-file .env -f docker-compose.prod.yml ps && docker exec createsheets-redis redis-cli --scan --pattern "createsheets:public:*" | sort | head -20'`
+- Result: Success.
+- Output summary:
+  - `createsheets-backend` is healthy on `127.0.0.1:18080`.
+  - `createsheets-frontend` is running on `127.0.0.1:3000`.
+  - `createsheets-redis` is healthy and internal-only.
+  - Memory remained light:
+    - backend around `252 MiB`
+    - frontend around `3 MiB`
+    - Redis around `7 MiB`
+  - Redis public cache keys include public CreateSheets cache keys.
+- Error, if any: None.
+- Next action: Record browser tooling limitation.
+
+## 2026-06-02 22:25 IST - Browser Verification Tooling Note
+
+- Step: Attempted browser-level verification of API request origins.
+- Commands:
+  - Opened the Browser skill path from session metadata with `sed`.
+  - Tried Playwright from the Node REPL.
+  - Checked for existing Node REPL browser globals.
+- Result: Browser automation unavailable in this session.
+- Output summary:
+  - Skill file path from session metadata was not present on disk.
+  - Node REPL reported `Module not found: playwright`.
+  - Node REPL reported no existing `browser` or `tab` globals.
+- Fix/action:
+  - Used production shell checks instead:
+    - deployed JS bundle check for absence of `api.createsheets.com`
+    - live same-origin API curl checks
+    - live Redis diagnostic header checks
+- Error, if any:
+  - Browser automation was unavailable, but shell verification succeeded.
+- Final note:
+  - This is a documentation-only follow-up entry so `redis.md` contains the push, CI/CD, production verification, and tooling notes.
+
+## 2026-06-02 22:28 IST - Documentation Follow-Up CI And Final Live Check
+
+- Step: Verified the documentation follow-up push and final production state.
+- Commands:
+  - `git add redis.md && git commit -m "Document Redis deployment verification" && git push origin HEAD:main`
+  - `gh run list --branch main --limit 5 --json databaseId,status,conclusion,displayTitle,headSha,workflowName,url`
+  - `gh run watch 26834921752 --exit-status`
+  - `curl -sS --max-time 15 -D /tmp/redis-final-headers -o /dev/null -w 'ttfb=%{time_starttransfer} total=%{time_total} code=%{http_code}\\n' https://www.createsheets.com/api/sheets/featured`
+  - `curl -sS --max-time 15 https://www.createsheets.com`
+  - `curl -sS --max-time 15 "https://www.createsheets.com$js" | rg -q 'api\\.createsheets\\.com'`
+  - `git status -sb`
+  - `git log -2 --oneline origin/main`
+- Result: Success.
+- Output summary:
+  - Documentation follow-up commit `f0100d2 Document Redis deployment verification` was pushed to `main`.
+  - GitHub Actions run `26834921752` completed successfully.
+  - Backend checks passed.
+  - Production config checks passed.
+  - Frontend checks passed.
+  - Deploy Production Docker Stack passed.
+  - Final live featured API check returned:
+    - HTTP `200`
+    - `X-Cache: HIT`
+    - `X-Cache-Store: redis`
+    - `Server-Timing: redis;desc="HIT";dur=1.608`
+    - total time around `110 ms` from this local machine
+  - Final deployed frontend bundle check:
+    - asset `/assets/index-B0_U-eSL.js`
+    - `api.createsheets.com` not found
+  - Latest `origin/main` commits:
+    - `f0100d2 Document Redis deployment verification`
+    - `94f9006 Add Redis cache diagnostics and same-origin API`
+  - Unrelated local files remain untouched:
+    - `docs/HR.m4a`
+    - `docs/Tech.m4a`
+    - `record.md`
+- Warnings:
+  - The same existing GitHub Actions Node 20 deprecation warnings remain.
+  - The same existing React hook warnings remain:
+    - `src/pages/SheetPage.jsx`
+    - `src/pages/AlarmsPage.jsx`
+- Error, if any: None.
+- Final note:
+  - This final log entry will be pushed with a `[skip ci]` documentation-only commit to avoid triggering another redundant deploy loop.
+
+## 2026-06-02 22:31 IST - Private Sheet Redis Cache Request And Inspection
+
+- Step: Started implementation for aggressive Redis usage on private/authenticated sheet APIs.
+- User request summary:
+  - Use Redis whenever Redis already has the data instead of hitting MongoDB.
+  - Add update-and-invalidate strategy.
+  - Reduce API response time as much as possible, aiming for under `50 ms` or under `10 ms` where realistic.
+  - Cache private sheet data too, but keep it secure.
+- Commands:
+  - `sed -n '1,260p' backend/src/main/java/com/iqms/backend/sheet/SheetService.java`
+  - `sed -n '260,560p' backend/src/main/java/com/iqms/backend/sheet/SheetService.java`
+  - `sed -n '1,220p' backend/src/main/java/com/iqms/backend/sheet/SheetController.java`
+  - `sed -n '1,240p' backend/src/main/java/com/iqms/backend/dto/sheet/SheetListItemResponse.java`
+  - `sed -n '1,360p' backend/src/main/java/com/iqms/backend/service/SheetCollaborationService.java`
+  - `sed -n '1,260p' backend/src/test/java/com/iqms/backend/service/SheetServiceTest.java`
+  - `sed -n '1,220p' backend/src/test/java/com/iqms/backend/cache/PublicReadCacheServiceTest.java`
+  - `rg -n "SheetService|listSheetsAccessibleBy|getAccessibleSheet|PublicReadCacheService|cache" backend/src/test backend/src/main/resources backend/src/main/java/com/iqms/backend -g '!target'`
+- Result: Success.
+- Output summary:
+  - Public Redis cache already exists for featured/admin/public catalog/profile/sitemap data.
+  - Normal authenticated sheet APIs still hit MongoDB:
+    - `GET /api/sheets`
+    - `GET /api/sheets/{sheetId}`
+    - `GET /api/sheets/{sheetId}/ai/suggest-next`
+  - Mutations currently invalidate public caches only:
+    - create sheet
+    - update sheet
+    - update sharing
+    - delete sheet
+    - remix/copy
+    - engagement updates
+  - Collaboration invite updates sheet access but does not yet invalidate any Redis cache.
+- Design decision:
+  - Add private cache keys scoped by authenticated user id:
+    - `createsheets:private:v1:user:{userId}:sheets:list`
+    - `createsheets:private:v1:user:{userId}:sheet:{sheetId}`
+  - Never use raw client-provided cache keys.
+  - Store private sheet data only behind server-generated user-scoped Redis keys.
+  - Keep Redis internal-only in Docker, with no public Redis port.
+  - Use short TTL for private cache data so any missed invalidation expires quickly.
+  - For write/update/delete flows, continue loading authoritative data from MongoDB before applying changes.
+  - After every mutation, evict:
+    - cached detail for that sheet across users
+    - cached list for the owner and collaborators
+    - relevant public caches when public visibility/public metadata may be affected
+- Latency note:
+  - A public browser request from a local machine to AWS cannot be guaranteed under `10 ms` because DNS, TLS, network distance, and Nginx/frontend/backend hops dominate.
+  - The realistic target is:
+    - Redis read inside the backend in low single-digit milliseconds.
+    - Production cached API responses often below `50 ms` when tested close to the EC2 region.
+    - Local laptop-to-AWS timing may still be around `80-180 ms` even when Redis is a HIT.
+- Error, if any:
+  - Initial path guesses for `SheetListItemResponse` and `SheetCollaborationService` were wrong because the Java package paths differ from the file layout. Fixed by locating files with `rg --files`.
+
+## 2026-06-02 22:36 IST - Private Authenticated Sheet Cache Implementation
+
+- Step: Implemented secure private Redis cache-aside for authenticated sheet reads.
+- Files changed:
+  - `backend/src/main/java/com/iqms/backend/cache/PrivateSheetCacheService.java`
+    - Added a new service for private/authenticated sheet caching.
+    - Uses server-generated user-scoped keys only.
+    - Caches:
+      - authenticated accessible sheet list
+      - authenticated sheet detail
+    - Redis failures fail open to the loader/MongoDB path.
+    - Cached values are validated with the current service authorization logic before being returned.
+    - Private cache TTL defaults to `120` seconds.
+  - `backend/src/main/java/com/iqms/backend/cache/PublicReadCacheService.java`
+    - Made cache diagnostic recording package-visible/static so private cache reads can also emit `X-Cache`, `X-Cache-Store`, and `Server-Timing` headers.
+  - `backend/src/main/java/com/iqms/backend/sheet/SheetService.java`
+    - Injected `PrivateSheetCacheService`.
+    - `GET /api/sheets` now uses Redis cache-aside for the authenticated user's accessible sheet list.
+    - `GET /api/sheets/{sheetId}` now uses Redis cache-aside for the authenticated user's sheet detail.
+    - `GET /api/sheets/{sheetId}/ai/suggest-next` benefits because it calls `getAccessibleSheet`.
+    - Mutations still load from MongoDB before applying writes, so Redis does not become the write authority.
+    - Sheet create/update/delete/sharing/remix/copy/engagement changes now invalidate private cache and public cache.
+    - After create/update/copy/remix, the actor's sheet-detail cache is warmed with the saved value.
+  - `backend/src/main/java/com/iqms/backend/service/SheetCollaborationService.java`
+    - Injected `PrivateSheetCacheService`.
+    - Collaborator invite/role updates now evict private sheet/list cache entries.
+  - `backend/src/main/resources/application.properties`
+    - Added `app.cache.private-ttl-seconds=${APP_CACHE_PRIVATE_TTL_SECONDS:120}`.
+  - `docker-compose.yml`
+    - Added `APP_CACHE_PRIVATE_TTL_SECONDS` default for local Docker.
+  - `docker-compose.prod.yml`
+    - Added `APP_CACHE_PRIVATE_TTL_SECONDS` default for production Docker.
+  - `backend/src/test/java/com/iqms/backend/cache/PrivateSheetCacheServiceTest.java`
+    - Added tests for private cache hit, miss, fail-open read, fail-open write, and stale cached access rejection.
+  - `backend/src/test/java/com/iqms/backend/service/SheetServiceTest.java`
+    - Added private cache mock wiring and tests proving read methods use Redis before MongoDB.
+    - Added mutation invalidation/cache-warm verification.
+  - `backend/src/test/java/com/iqms/backend/service/SheetCollaborationServiceTest.java`
+    - Added verification that collaborator invite invalidates private cache.
+- Security strategy:
+  - Private cache keys include authenticated server-side user id.
+  - Example key shape:
+    - `createsheets:private:v1:user:{userId}:sheets:list`
+    - `createsheets:private:v1:user:{userId}:sheet:{sheetId}`
+  - Redis keys are never accepted from request input.
+  - Redis is configured as an internal Docker service, not a public port in production.
+  - Mutations evict detail keys for the sheet across all users and list keys for owner/collaborators.
+  - Private TTL is short so any missed future invalidation expires quickly.
+  - MongoDB remains the source of truth.
+- Update/invalidate strategy:
+  - Read:
+    - check Redis first
+    - return cached data on authorized hit
+    - on miss/error, load MongoDB, save Redis, return data
+  - Write:
+    - load authoritative sheet from MongoDB
+    - save mutation to MongoDB
+    - evict Redis keys related to that sheet
+    - warm the actor detail cache where safe
+  - Access change:
+    - evict user list keys for owner/collaborators
+    - evict sheet detail keys for all cached users
+- Expected latency effect:
+  - Repeated authenticated sheet reads should avoid MongoDB and use Redis.
+  - Backend Redis work should be low single-digit milliseconds on EC2.
+  - Browser-visible latency still includes DNS/TLS/network/Nginx/backend hops, so under `10 ms` from a remote laptop is not realistic.
+
+## 2026-06-02 22:36 IST - Private Cache Validation And Errors
+
+- Step: Ran local validation after private cache implementation.
+- Commands:
+  - `./mvnw -f backend/pom.xml test`
+  - `mvn -f backend/pom.xml test`
+  - `/usr/libexec/java_home -V 2>&1`
+  - `JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn -f backend/pom.xml test`
+  - `JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn -f backend/pom.xml clean package -DskipTests`
+  - `docker compose config >/tmp/createsheets-local-compose-config.txt`
+  - `docker compose -f docker-compose.prod.yml config >/tmp/createsheets-prod-compose-config.txt`
+  - `git diff --check`
+  - `git status -sb`
+- Result:
+  - Final validation succeeded.
+- Output summary:
+  - `./mvnw -f backend/pom.xml test`
+    - Failed immediately because this repo does not include `./mvnw`.
+    - Fix: use installed `mvn`.
+  - `mvn -f backend/pom.xml test`
+    - Compiled the code, but failed on Java `25` because existing Mockito/Byte Buddy cannot mock several classes on Java 25.
+    - Error summary:
+      - `Java 25 (69) is not supported by the current version of Byte Buddy which officially supports Java 24 (68)`
+    - Fix: use installed Java `21`.
+  - `/usr/libexec/java_home -V 2>&1`
+    - Found Java `21.0.10` at `/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home`.
+  - First Java 21 test run:
+    - Reduced to one real test-stubbing issue in the new test.
+    - Error summary:
+      - Mockito executed a default answer with null matcher values because the test used `when(...)` on a method already stubbed with a default answer.
+    - Fix:
+      - changed the test override to `doReturn(...).when(...)`.
+  - Final Java 21 test run:
+    - `Tests run: 44, Failures: 0, Errors: 0, Skipped: 0`
+    - `BUILD SUCCESS`
+  - Package build:
+    - Built `backend/target/iqms-backend-0.0.1-SNAPSHOT.jar`
+    - `BUILD SUCCESS`
+  - Docker compose config:
+    - Local compose config succeeded.
+    - Production compose config succeeded.
+    - Warnings appeared because local shell did not provide production `.env` values:
+      - `MONGODB_URI` not set
+      - `APP_AUTH_SECRET` not set
+    - This was expected; secrets were not printed.
+  - `git diff --check`
+    - Passed with no whitespace errors.
+  - `git status -sb`
+    - Shows intended Redis/backend/Docker/doc changes.
+    - Unrelated local files remain untouched:
+      - `docs/HR.m4a`
+      - `docs/Tech.m4a`
+      - `record.md`
+- Error, if any:
+  - No remaining code/test errors after Java 21 rerun and test-stub fix.
+
+## 2026-06-02 23:41 IST - Private Redis Cache Production Deployment Verification
+
+- Step: Continued the interrupted deployment verification for commit `d0f4f56 Add private Redis sheet caching`.
+- Commands:
+  - `gh run view 26838709581 --json status,conclusion,url,headSha,displayTitle,jobs`
+  - `curl -sS --max-time 20 -D /tmp/createsheets-home-headers -o /dev/null -w ... https://www.createsheets.com`
+  - `curl -sS --max-time 20 -D /tmp/createsheets-health-headers -o /tmp/createsheets-health-body -w ... https://www.createsheets.com/api/health`
+  - `curl -sS --max-time 20 -D /tmp/createsheets-featured-1-headers -o /dev/null -w ... https://www.createsheets.com/api/sheets/featured`
+  - `curl -sS --max-time 20 -D /tmp/createsheets-featured-2-headers -o /dev/null -w ... https://www.createsheets.com/api/sheets/featured`
+  - `ssh -i /Users/krishnaawasthi/Downloads/createsheets_ec2.pem ubuntu@13.232.154.34 ...`
+  - `ssh -i /Users/krishnaawasthi/Downloads/createsheets_ec2.pem ec2-user@13.232.154.34 'echo ok'`
+  - `ssh -i /Users/krishnaawasthi/Downloads/createsheets_ec2.pem deploy@13.232.154.34 ...`
+  - `ssh -i /Users/krishnaawasthi/Downloads/createsheets_ec2.pem ec2-user@13.232.154.34 'cd /opt/createsheets/app && docker compose --env-file .env -f docker-compose.prod.yml ps && docker exec createsheets-redis redis-cli ping && ...'`
+  - Authenticated API verification with the test account:
+    - login token was written only to `/tmp/createsheets-token.txt`
+    - token was not printed
+    - password/token are not recorded in this file
+    - `GET https://www.createsheets.com/api/sheets` twice
+    - `GET https://www.createsheets.com/api/sheets/{sheetId}` three times
+  - `curl -sS --max-time 20 -D /tmp/createsheets-explore-headers -o /tmp/createsheets-explore-body -w ... https://www.createsheets.com/explore`
+  - `git log -1 --oneline origin/main`
+  - `git status -sb`
+- GitHub Actions result:
+  - Workflow run `26838709581` completed successfully.
+  - Head SHA: `d0f4f56bb0c6201f44954e86fec37c494b68b2dd`.
+  - Backend checks:
+    - tests passed
+    - production JAR build passed
+  - Frontend checks:
+    - install passed
+    - lint passed
+    - build passed
+    - tests passed
+  - Production config checks:
+    - workflow YAML validation passed
+    - production compose validation passed
+  - Deploy Production Docker Stack:
+    - SSH setup passed
+    - repo sync to EC2 passed
+    - Docker stack build/restart passed
+    - local container health validation passed
+    - public URL validation passed
+- Production URL result:
+  - `https://www.createsheets.com`
+    - HTTP `200`
+    - total around `203 ms` from local machine
+  - `https://www.createsheets.com/api/health`
+    - HTTP `200`
+    - response body reported backend status `ok`
+    - total around `104 ms` from local machine
+  - `https://www.createsheets.com/explore`
+    - HTTP `200`
+    - returned the frontend SPA HTML successfully
+    - total around `106 ms` from local machine
+- Public Redis verification:
+  - First checked `GET /api/sheets/featured` after deploy:
+    - HTTP `200`
+    - `X-Cache: HIT`
+    - `X-Cache-Store: redis`
+    - one request reported high Redis timing after deploy warmup: around `807 ms`
+  - Second `GET /api/sheets/featured`:
+    - HTTP `200`
+    - `X-Cache: HIT`
+    - `X-Cache-Store: redis`
+    - `Server-Timing: redis;desc="HIT";dur=1.467`
+    - total around `112 ms` from local machine
+- Private Redis verification:
+  - Before authenticated requests, Redis private key count was `0`.
+  - Authenticated `GET /api/sheets` first request:
+    - HTTP `200`
+    - `X-Cache: MISS`
+    - `X-Cache-Store: redis`
+    - `Server-Timing: redis;desc="MISS";dur=126.555`
+    - returned `16` sheets
+  - Authenticated `GET /api/sheets` second request:
+    - HTTP `200`
+    - `X-Cache: HIT`
+    - `X-Cache-Store: redis`
+    - `Server-Timing: redis;desc="HIT";dur=28.587`
+    - returned `16` sheets
+  - Authenticated `GET /api/sheets/{sheetId}` first request:
+    - HTTP `200`
+    - `X-Cache: MISS`
+    - `X-Cache-Store: redis`
+    - `Server-Timing: redis;desc="MISS";dur=20.412`
+  - Authenticated `GET /api/sheets/{sheetId}` second request:
+    - HTTP `200`
+    - `X-Cache: HIT`
+    - `X-Cache-Store: redis`
+    - `Server-Timing: redis;desc="HIT";dur=2.971`
+  - Authenticated `GET /api/sheets/{sheetId}` third request:
+    - HTTP `200`
+    - `X-Cache: HIT`
+    - `X-Cache-Store: redis`
+    - `Server-Timing: redis;desc="HIT";dur=4.727`
+  - After authenticated verification, Redis private key count was `2`:
+    - one user-scoped sheet detail key
+    - one user-scoped accessible sheet list key
+- EC2/Docker verification:
+  - SSH user check:
+    - `ubuntu` failed with public key permission denied.
+    - `deploy` failed with public key permission denied.
+    - `ec2-user` worked with the local PEM.
+  - Docker stack on EC2:
+    - `createsheets-backend` is healthy and mapped to `127.0.0.1:18080`.
+    - `createsheets-frontend` is healthy and mapped to `127.0.0.1:3000`.
+    - `createsheets-redis` is healthy.
+  - Redis ping:
+    - `PONG`
+- Current git state:
+  - `origin/main` points to `d0f4f56 Add private Redis sheet caching`.
+  - Unrelated local files remain untouched:
+    - `docs/HR.m4a`
+    - `docs/Tech.m4a`
+    - `record.md`
+- Error, if any:
+  - A shell cleanup command initially failed before sending any auth request because zsh had no matches for `/tmp/createsheets-private-sheets-*.headers`.
+  - Fix:
+    - reran using explicit temp filenames.
+  - Local PEM SSH with `ubuntu` and `deploy` failed.
+  - Fix:
+    - used `ec2-user`, which succeeded.
+- Final note:
+  - Private Redis cache is implemented and deployed.
+  - Private sheet detail hits are now in the low single-digit backend Redis timing range.
+  - Private list hits avoid MongoDB, but list deserialization/authorization filtering can still take more than detail reads for users with many sheets.
+  - Browser-visible total time still includes network/TLS/Nginx and cannot be guaranteed under `10 ms` from a remote machine.

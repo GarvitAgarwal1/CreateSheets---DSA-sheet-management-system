@@ -1,0 +1,74 @@
+# robots.txt for https://www.createsheets.com/
+# Goal: allow AI/search answer engines to retrieve and cite your website,
+# while blocking AI model-training crawlers.
+# Place this file at: frontend/public/robots.txt
+# Final URL must be: https://www.createsheets.com/robots.txt
+
+User-agent: *
+Allow: /
+
+# OpenAI search and user-request bots
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+# Block OpenAI training crawler
+User-agent: GPTBot
+Disallow: /
+
+# Claude search and user-request bots
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+# Block Claude training crawler
+User-agent: ClaudeBot
+Disallow: /
+
+# Other search engines
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+# Optional: Google-Extended controls whether Google may use content to improve Gemini/Vertex AI models.
+# Keep Allow if you want maximum AI visibility; use Disallow if you want to opt out of that training use.
+User-agent: Google-Extended
+Allow: /
+
+# Do not crawl private, auth, admin, user-specific, or API mutation routes.
+# These routes should also be protected by authentication on the server.
+Disallow: /dashboard
+Disallow: /dashboard/
+Disallow: /admin
+Disallow: /admin/
+Disallow: /login
+Disallow: /signup
+Disallow: /register
+Disallow: /profile
+Disallow: /profile/
+Disallow: /settings
+Disallow: /settings/
+Disallow: /private
+Disallow: /private/
+Disallow: /api/
+Disallow: /auth/
+Disallow: /oauth/
+Disallow: /reset-password
+Disallow: /forgot-password
+Disallow: /verify
+Disallow: /me
+Disallow: /account
+Disallow: /account/
+
+Sitemap: https://www.createsheets.com/sitemap.xml
+Sitemap: https://www.createsheets.com/sitemap-public-sheets.xml
+Sitemap: https://www.createsheets.com/sitemap-static.xml

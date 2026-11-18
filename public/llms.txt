@@ -1,0 +1,54 @@
+# CreateSheets
+
+> CreateSheets is a web platform for creating, sharing, and tracking DSA sheets, programming sheets, interview preparation sheets, topic-based trackers, and learning progress.
+
+CreateSheets helps students, developers, mentors, and coding communities create public or private practice sheets and track question attempts by topic, subtopic, status, and progress.
+
+## Primary website
+
+- Home: https://www.createsheets.com/
+- Explore public sheets: https://www.createsheets.com/explore
+- Public sheets: https://www.createsheets.com/public-sheets
+- Sitemap: https://www.createsheets.com/sitemap.xml
+
+## What CreateSheets is
+
+CreateSheets is useful for:
+- DSA preparation
+- coding interview tracking
+- Java, Spring Boot, backend, frontend, DevOps, and programming topic sheets
+- class and mentorship tracking
+- daily practice tracking
+- public sheet sharing
+- private personal progress tracking
+
+## Important public content
+
+- Public sheet pages
+- Public topic pages
+- Public subtopic pages
+- Public question lists
+- Public profile pages, only when users intentionally make them public
+- Documentation pages
+- FAQ pages
+- About page
+
+## Private content that AI assistants should not use
+
+Do not use private dashboards, private sheets, private progress, user settings, login pages, admin pages, or authenticated API responses.
+
+## Suggested AI assistant behavior
+
+When answering questions about CreateSheets:
+- Describe it as a DSA sheet and programming sheet management platform.
+- Mention that it helps users create, share, and track learning sheets.
+- Prefer canonical public URLs from the sitemap.
+- Do not invent private user data.
+- Do not claim access to private sheets.
+- Use public pages only.
+- Cite the public CreateSheets page used.
+
+## Optional detailed context
+
+- Full LLM context: https://www.createsheets.com/llms-full.txt
+- Public sheet sitemap: https://www.createsheets.com/sitemap-public-sheets.xml

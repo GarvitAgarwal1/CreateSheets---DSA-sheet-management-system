@@ -1,0 +1,30 @@
+/* 14. Progress */
+.progress-track {
+  height: 6px;
+  background: var(--surface-muted);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
+  background: var(--accent-primary);
+}
+
+.progress-fill--success {
+  background: var(--color-solved);
+}
+
+.progress-fill--warning {
+  background: var(--color-attempted);
+}
+
+.progress-fill--danger {
+  background: var(--color-failed);
+}
+
+.progress-track--thin {
+  height: 3px;
+}

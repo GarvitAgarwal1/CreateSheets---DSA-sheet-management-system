@@ -1,0 +1,173 @@
+package com.iqms.backend.model;
+
+import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
+import org.springframework.data.mongodb.core.mapping.Document;
+
+@Document(collection = "users")
+public class User {
+
+  @Id
+  private String id;
+
+  private String name;
+
+  @Indexed(unique = true)
+  private String email;
+
+  @Indexed(unique = true)
+  private String username;
+
+  private String password;
+  private String authProvider;
+  private boolean emailVerified = false;
+  private String emailOtpHash;
+  private Instant emailOtpExpiresAt;
+  private Instant emailOtpLastSentAt;
+  private int emailOtpFailedAttempts = 0;
+  private Instant emailOtpLockedUntil;
+
+  @Indexed(unique = true)
+  private String profileShareId;
+
+  private Instant createdAt;
+  private String bio;
+  private String headline;
+  private String location;
+  private String institution;
+  private String company;
+  private String websiteUrl;
+  private String githubUrl;
+  private String linkedinUrl;
+  private String resumeUrl;
+  private String skills;
+  private String achievements;
+  private String projects;
+  private String experience;
+  private String education;
+  private Integer usernameChangeCount = 0;
+  private Integer emailChangeCount = 0;
+  private Set<String> followerUserIds = new LinkedHashSet<>();
+  private Set<String> followingUserIds = new LinkedHashSet<>();
+  private Set<String> copiedSheetIds = new LinkedHashSet<>();
+  private java.util.List<DifficultyCategory> difficultyCategories = new java.util.ArrayList<>();
+  private java.util.List<ConnectedPlatformProfile> platformProfiles = new java.util.ArrayList<>();
+  private Instant premiumUntil;
+  private Instant premiumTrialStartedAt;
+  private Instant premiumTrialEndsAt;
+  private String premiumGrantedReason;
+  private Boolean hadFreePremiumTrial = false;
+  private Boolean premiumTrialWelcomePending = false;
+  private String planTier = "free";
+  private String subscriptionStatus = "active";
+
+  public String getId() { return id; }
+  public void setId(String id) { this.id = id; }
+  public String getName() { return name; }
+  public void setName(String name) { this.name = name; }
+  public String getEmail() { return email; }
+  public void setEmail(String email) { this.email = email; }
+  public String getPassword() { return password; }
+  public void setPassword(String password) { this.password = password; }
+  public String getUsername() { return username; }
+  public void setUsername(String username) { this.username = username; }
+  public String getAuthProvider() { return authProvider; }
+  public void setAuthProvider(String authProvider) { this.authProvider = authProvider; }
+  public boolean isEmailVerified() { return emailVerified; }
+  public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
+  public String getEmailOtpHash() { return emailOtpHash; }
+  public void setEmailOtpHash(String emailOtpHash) { this.emailOtpHash = emailOtpHash; }
+  public Instant getEmailOtpExpiresAt() { return emailOtpExpiresAt; }
+  public void setEmailOtpExpiresAt(Instant emailOtpExpiresAt) { this.emailOtpExpiresAt = emailOtpExpiresAt; }
+  public Instant getEmailOtpLastSentAt() { return emailOtpLastSentAt; }
+  public void setEmailOtpLastSentAt(Instant emailOtpLastSentAt) { this.emailOtpLastSentAt = emailOtpLastSentAt; }
+  public int getEmailOtpFailedAttempts() { return emailOtpFailedAttempts; }
+  public void setEmailOtpFailedAttempts(int emailOtpFailedAttempts) {
+    this.emailOtpFailedAttempts = Math.max(0, emailOtpFailedAttempts);
+  }
+  public Instant getEmailOtpLockedUntil() { return emailOtpLockedUntil; }
+  public void setEmailOtpLockedUntil(Instant emailOtpLockedUntil) { this.emailOtpLockedUntil = emailOtpLockedUntil; }
+  public String getProfileShareId() { return profileShareId; }
+  public void setProfileShareId(String profileShareId) { this.profileShareId = profileShareId; }
+  public Instant getCreatedAt() { return createdAt; }
+  public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+  public String getBio() { return bio; }
+  public void setBio(String bio) { this.bio = bio; }
+  public String getHeadline() { return headline; }
+  public void setHeadline(String headline) { this.headline = headline; }
+  public String getLocation() { return location; }
+  public void setLocation(String location) { this.location = location; }
+  public String getInstitution() { return institution; }
+  public void setInstitution(String institution) { this.institution = institution; }
+  public String getCompany() { return company; }
+  public void setCompany(String company) { this.company = company; }
+  public String getWebsiteUrl() { return websiteUrl; }
+  public void setWebsiteUrl(String websiteUrl) { this.websiteUrl = websiteUrl; }
+  public String getGithubUrl() { return githubUrl; }
+  public void setGithubUrl(String githubUrl) { this.githubUrl = githubUrl; }
+  public String getLinkedinUrl() { return linkedinUrl; }
+  public void setLinkedinUrl(String linkedinUrl) { this.linkedinUrl = linkedinUrl; }
+  public String getResumeUrl() { return resumeUrl; }
+  public void setResumeUrl(String resumeUrl) { this.resumeUrl = resumeUrl; }
+  public String getSkills() { return skills; }
+  public void setSkills(String skills) { this.skills = skills; }
+  public String getAchievements() { return achievements; }
+  public void setAchievements(String achievements) { this.achievements = achievements; }
+  public String getProjects() { return projects; }
+  public void setProjects(String projects) { this.projects = projects; }
+  public String getExperience() { return experience; }
+  public void setExperience(String experience) { this.experience = experience; }
+  public String getEducation() { return education; }
+  public void setEducation(String education) { this.education = education; }
+  public int getUsernameChangeCount() { return usernameChangeCount == null ? 0 : usernameChangeCount; }
+  public void setUsernameChangeCount(Integer usernameChangeCount) {
+    this.usernameChangeCount = usernameChangeCount == null ? 0 : usernameChangeCount;
+  }
+  public int getEmailChangeCount() { return emailChangeCount == null ? 0 : emailChangeCount; }
+  public void setEmailChangeCount(Integer emailChangeCount) {
+    this.emailChangeCount = emailChangeCount == null ? 0 : emailChangeCount;
+  }
+  public Set<String> getFollowerUserIds() { return followerUserIds; }
+  public void setFollowerUserIds(Set<String> followerUserIds) {
+    this.followerUserIds = followerUserIds == null ? new LinkedHashSet<>() : new LinkedHashSet<>(followerUserIds);
+  }
+  public Set<String> getFollowingUserIds() { return followingUserIds; }
+  public void setFollowingUserIds(Set<String> followingUserIds) {
+    this.followingUserIds = followingUserIds == null ? new LinkedHashSet<>() : new LinkedHashSet<>(followingUserIds);
+  }
+  public Set<String> getCopiedSheetIds() { return copiedSheetIds; }
+  public void setCopiedSheetIds(Set<String> copiedSheetIds) {
+    this.copiedSheetIds = copiedSheetIds == null ? new LinkedHashSet<>() : new LinkedHashSet<>(copiedSheetIds);
+  }
+  public java.util.List<DifficultyCategory> getDifficultyCategories() { return difficultyCategories; }
+  public void setDifficultyCategories(java.util.List<DifficultyCategory> difficultyCategories) {
+    this.difficultyCategories = difficultyCategories == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(difficultyCategories);
+  }
+  public java.util.List<ConnectedPlatformProfile> getPlatformProfiles() { return platformProfiles; }
+  public void setPlatformProfiles(java.util.List<ConnectedPlatformProfile> platformProfiles) {
+    this.platformProfiles = platformProfiles == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(platformProfiles);
+  }
+  public Instant getPremiumUntil() { return premiumUntil; }
+  public void setPremiumUntil(Instant premiumUntil) { this.premiumUntil = premiumUntil; }
+  public Instant getPremiumTrialStartedAt() { return premiumTrialStartedAt; }
+  public void setPremiumTrialStartedAt(Instant premiumTrialStartedAt) { this.premiumTrialStartedAt = premiumTrialStartedAt; }
+  public Instant getPremiumTrialEndsAt() { return premiumTrialEndsAt; }
+  public void setPremiumTrialEndsAt(Instant premiumTrialEndsAt) { this.premiumTrialEndsAt = premiumTrialEndsAt; }
+  public String getPremiumGrantedReason() { return premiumGrantedReason; }
+  public void setPremiumGrantedReason(String premiumGrantedReason) { this.premiumGrantedReason = premiumGrantedReason; }
+  public boolean getHadFreePremiumTrial() { return Boolean.TRUE.equals(hadFreePremiumTrial); }
+  public void setHadFreePremiumTrial(Boolean hadFreePremiumTrial) {
+    this.hadFreePremiumTrial = Boolean.TRUE.equals(hadFreePremiumTrial);
+  }
+  public boolean getPremiumTrialWelcomePending() { return Boolean.TRUE.equals(premiumTrialWelcomePending); }
+  public void setPremiumTrialWelcomePending(Boolean premiumTrialWelcomePending) {
+    this.premiumTrialWelcomePending = Boolean.TRUE.equals(premiumTrialWelcomePending);
+  }
+  public String getPlanTier() { return planTier; }
+  public void setPlanTier(String planTier) { this.planTier = planTier; }
+  public String getSubscriptionStatus() { return subscriptionStatus; }
+  public void setSubscriptionStatus(String subscriptionStatus) { this.subscriptionStatus = subscriptionStatus; }
+}
